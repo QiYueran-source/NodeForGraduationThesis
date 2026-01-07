@@ -1,1 +1,10 @@
 # 日志
+logs/*
+!logs/README.md
+
+# 数据
+data/* 
+!data/README.md
+
+# 环境
+.env
