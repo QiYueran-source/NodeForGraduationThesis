@@ -1,0 +1,8 @@
+测试日志
+cd /home/frank/files/programs/GraduationThesis
+
+# 构建镜像（指定Dockerfile路径）
+docker build -f Node/DockerFile -t graduation-thesis-node .
+
+# 查看构建的镜像
+docker images

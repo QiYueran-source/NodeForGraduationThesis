@@ -1,0 +1,4 @@
+git remote -v
+git remote add cnb https://cnb.cool/qiyueran-source/Node1
+git remote -v
+git push -u cnb HEAD:main
