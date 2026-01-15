@@ -31,6 +31,10 @@ if [ -z "$ALLOCATED_PORT" ] || [ "$ALLOCATED_PORT" = "null" ]; then
 fi
 log_info "获取可用端口: $ALLOCATED_PORT"
 
+# 导出到环境变量，供后续 Python 使用
+export ALLOCATED_PORT="$ALLOCATED_PORT"
+log_info "已导出环境变量 ALLOCATED_PORT"
+
 # 注入端口到配置文件
 if sed -i "s/remotePort = \$remotePort/remotePort = $ALLOCATED_PORT/" /Node/frp/frpc.toml; then
     log_info "端口注入成功"
