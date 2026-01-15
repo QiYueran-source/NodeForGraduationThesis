@@ -48,6 +48,7 @@ fi
 
 # 启动frp客户端（日志由frpc.toml配置处理）
 /Node/frp/frpc -c /Node/frp/frpc.toml &
+FRP_PID=$!  # 获取新进程的PID
 
 # 检查是否启动完成  
 sleep 3

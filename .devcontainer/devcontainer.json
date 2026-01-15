@@ -1,24 +1,21 @@
 {
     "name": "Node Agent Development",
-    "image": "graduation-thesis-node:latest",  // 使用已构建的镜像
+    "image": "graduation-thesis-node:latest",
     
-    // 容器配置
     "containerEnv": {
         "NODE_ID": "dev_node_001",
         "REDIS_HOST": "host.docker.internal",
         "PYTHONPATH": "/Node"
     },
     
-    // 端口转发
-    "forwardPorts": [8192],
+    // 端口转发：保留你需要的8191-8220全端口（也可简化为["8191-8220"]）
+    "forwardPorts": [8191,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8203,8204,8205,8206,8207,8208,8209,8210,8211,8212,8213,8214,8215,8216,8217,8218,8219,8220],
     
-    // 挂载卷
-    "mounts": [
-        "source=${localWorkspaceFolder}/logs,target=/Node/logs,type=bind",
-        "source=${localWorkspaceFolder}/data,target=/Node/data,type=bind"
-    ],
-    
-    // 扩展安装
+    // 1. 核心：指定工作区为容器的/Node（和docker工作目录一致）
+    "workspaceFolder": "/Node",
+    // 2. 关键：用本地绝对路径替换动态变量，避免变量解析问题
+    "workspaceMount": "source=/home/frank/files/programs/GraduationThesis/Node,target=/Node,type=bind,consistency=consistent",
+
     "extensions": [
         "ms-python.python",
         "ms-python.black-formatter",
@@ -28,7 +25,6 @@
         "ms-vscode.vscode-json"
     ],
     
-    // 工作区设置
     "settings": {
         "python.defaultInterpreterPath": "/usr/local/bin/python",
         "python.formatting.provider": "black",
@@ -36,9 +32,7 @@
         "python.linting.pylintEnabled": true
     },
     
-    // 启动后运行的命令
-    "postStartCommand": "echo 'Development container started!'",
-    
-    // 远程用户
+    "postStartCommand": "echo 'Adjusting /Node permissions...' && if [ -d /Node ]; then sudo chown -R agentuser:agentuser /Node || true; sudo chmod -R u+rwX /Node || true; fi && echo 'Development container started!'",
+
     "remoteUser": "agentuser"
 }

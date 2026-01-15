@@ -32,23 +32,16 @@ RUN useradd --create-home --shell /bin/bash agentuser && \
     chown -R agentuser:agentuser /Node && \
     usermod -aG sudo agentuser && \
     echo "agentuser ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/agentuser && \
-    chmod 0440 /etc/sudoers.d/agentuser
+    chmod 0440 /etc/sudoers.d/agentuser 
+
 
 # 复制应用代码
 COPY . .
 
-# 创建日志目录和数据目录，并设置权限  
-RUN mkdir -p logs data && \
-    chmod 755 logs data && \
-    chown -R agentuser:agentuser logs data && \
-    touch logs/frpc.log && \
-    chown agentuser:agentuser logs/frpc.log
-
-# 设置所有脚本的执行权限 
-RUN chmod +x scripts/*.sh
-
-# frp执行权限 
-RUN chmod +x frp/frpc
+# 统一设置权限
+RUN chown -R agentuser:agentuser /Node && \
+    chmod -R 755 /Node && \
+    chmod +x /Node/scripts/*.sh /Node/frp/frpc
 
 # 设置完权限后，切换到非root用户  
 USER agentuser
@@ -64,7 +57,7 @@ ENV PYTHONUNBUFFERED=1
 ENV NODE_TYPE=agent_trainer
 
 # 暴露端口（用于接受启动任务）
-EXPOSE 8192-8220
+EXPOSE 8191-8220
 
 # 健康检查（暂时注释掉，因为health_check.py文件不存在）
 # HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
