@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     net-tools \
     iproute2 \
     sudo\
+    jq \ 
     && rm -rf /var/lib/apt/lists/*
 
 # 创建工作目录
@@ -48,10 +49,6 @@ RUN chmod +x scripts/*.sh
 
 # frp执行权限 
 RUN chmod +x frp/frpc
-
-# CMD命令启动frp客户端并启动worker进程  
-COPY start.sh /start.sh
-RUN chmod +x /start.sh
 
 # 设置完权限后，切换到非root用户  
 USER agentuser

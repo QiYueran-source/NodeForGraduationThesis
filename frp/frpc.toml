@@ -13,4 +13,4 @@ name = "node_agent_$(hostname)_$(uuidgen | cut -d'-' -f1)"
 type = "tcp"
 localIP = "127.0.0.1"
 localPort = 4321
-remotePort = 8195
+remotePort = $remotePort
