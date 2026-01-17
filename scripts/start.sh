@@ -10,18 +10,8 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# worker启动  
-echo "=== 启动worker进程 ==="
-python /Node/worker.py &
+# tcp监听启动  
+echo "=== 启动tcp监听进程 ==="
+python /Node/tcp_listener.py & 
 
-echo "=== 启动测试TCP服务器(开发模式) ==="
-python /Node/test_tcp_server.py &
-
-echo "=== 所有服务已启动 ==="
-
-# 打印frp状态
-echo "=== 查看frp状态(开发环境) ==="
-/Node/scripts/frp/frp_status.sh
-
-# 等待所有后台进程
 wait

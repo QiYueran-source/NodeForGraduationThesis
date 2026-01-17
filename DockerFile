@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.11-slim
 
 # 安装系统依赖 - 正确配置阿里云源
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -24,6 +24,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     jq \ 
     && rm -rf /var/lib/apt/lists/*
 
+RUN pip install --no-cache-dir uv
+
 # 创建工作目录
 WORKDIR /Node
 
@@ -46,11 +48,13 @@ RUN chown -R agentuser:agentuser /Node && \
 # 设置完权限后，切换到非root用户  
 USER agentuser
 
-# 安装Python依赖 (使用国内源加速)
-RUN pip install --no-cache-dir -r requirements.txt \
-    --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+# 安装依赖到系统 Python（使用 --system 标志，需要 sudo）
+RUN sudo uv pip install --system --no-cache -r /Node/requirements.txt \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple \
     --trusted-host pypi.tuna.tsinghua.edu.cn
-    
+RUN sudo uv pip install --system --no-cache torch \
+    --index-url https://download.pytorch.org/whl/cpu
+
 # 设置环境变量
 ENV PYTHONPATH=/Node
 ENV PYTHONUNBUFFERED=1
