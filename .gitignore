@@ -11,3 +11,6 @@ data/*
 
 # frpc配置   
 frp/frpc.toml
+
+# 容器开发
+.devcontainer
