@@ -1,6 +1,11 @@
 """
-节点工作启动文件
+节点工作启动文件  
+worker有三个线程组成  
+worker  
+|- data_loader 
+|- trainer  
+|- monitor  
+
 """
-import time 
-while True:
-    time.sleep(500)
+class Worker:
+    pass 
