@@ -8,3 +8,6 @@ data/*
 
 # 环境
 .env
+
+# frpc配置   
+frp/frpc.toml
