@@ -17,11 +17,13 @@ class DataCachePool:
         """
         初始化缓存池
         """
-        # 缓存数据：键为 (code, year, month)，值为数据
-        self._cache: Dict[Tuple[str, int, int], Any] = {}
+        self._cache: Dict[Tuple[str, int, int], Any] = {} # 缓存数据：键为 (code, year, month)，值为数据
+        self._meta: Dict[str:Any] = {} # 元数据字典
         
         # 线程锁，保护缓存操作
         self._lock = threading.Lock()
+        self._meta_lock = threading.Lock()
+        self._meta: Dict[str:Any] = {} # 元数据字典
         
         logger.info("数据缓存池已创建")
     
@@ -86,38 +88,75 @@ class DataCachePool:
                 logger.debug("缓存中不存在: %s, %s, %s", code, year, month)
                 return None
     
-    def contains(self, code: str, year: int, month: int) -> bool:
+    def contains(self, year: int, month: Optional[int] = None, code: Optional[str] = None) -> bool:
         """
-        检查数据是否存在（不删除）
-        :param code: 股票代码
+        检查数据是否存在（支持部分匹配）
         :param year: 年份
-        :param month: 月份
-        :return: 是否存在
-        """
-        key = (code, year, month)
-        with self._lock:
-            return key in self._cache
-    
-    def peek(self, code: str, year: int, month: int) -> Optional[Any]:
-        """
-        查看数据但不删除
-        :param code: 股票代码
-        :param year: 年份
-        :param month: 月份
-        :return: 数据，如果不存在返回 None
-        """
-        key = (code, year, month)
-        with self._lock:
-            return self._cache.get(key)
-    
-    def clear(self):
-        """
-        清空缓存池
-        """
-        with self._lock:
-            count = len(self._cache)
-            self._cache.clear()
-            logger.info("缓存池已清空，清除了 %d 条数据", count)
+        :param month: 月份，默认为None
+        :param code: 股票代码，默认为None
+        :return: 是否存在符合条件的数据
 
+        匹配逻辑：
+        - 如果month和code都提供：检查特定(year, month, code)是否存在
+        - 如果只有month提供：检查该年份该月份是否有任何股票数据
+        - 如果month和code都为None：检查该年份是否有任何数据
+        """
+        with self._lock:
+            for key in self._cache.keys():
+                cache_code, cache_year, cache_month = key
+
+                # 必须匹配年份
+                if cache_year != year:
+                    continue
+
+                # 如果指定了月份，必须匹配月份
+                if month is not None and cache_month != month:
+                    continue
+
+                # 如果指定了代码，必须匹配代码
+                if code is not None and cache_code != code:
+                    continue
+
+                # 找到匹配的数据
+                return True
+
+            return False
+    
+    def count_years(self) -> int:
+        """
+        获取年份数量
+        :return: 年份数量
+        """
+        with self._lock:
+            return len(set([year for _, year, _ in self._cache.keys()]))
+    
+    def put_meta(self, key: str, value: Any):
+        """
+        将元数据放入缓存池
+        :param key: 键
+        :param value: 值
+        """
+        with self._meta_lock:
+            self._meta[key] = value
+
+        
+    
+    def get_meta(self, key: str) -> Optional[Any]:
+        """
+        从缓存池获取元数据
+        :param key: 键
+        :return: 值
+        """
+        with self._meta_lock:
+            return self._meta.get(key, None)
+    
+    def delete_meta(self, key: str):
+        """
+        从缓存池删除元数据
+        :param key: 键
+        """
+        with self._meta_lock:
+            self._meta.pop(key, None)
+    
 # 全局实例  
 DATA_CACHE_POOL = DataCachePool() 

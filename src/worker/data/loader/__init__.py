@@ -4,4 +4,4 @@
 2. 计数器+1
 3. 将数据保存在worker总进程  
 """
-
+from src.worker.data.loader.fetch import DATA_LOADER

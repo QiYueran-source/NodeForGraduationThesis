@@ -10,4 +10,4 @@ worker_process:
 data_thread:
   min_year: 1 # 仅有1年数据后，获取数据  
   max_year: 2 # 每次获取，使得存在至少2年数据   
-  check_interval: 1 # 检测间隔(year)  
+  check_interval: 10 # 检测间隔(s)  

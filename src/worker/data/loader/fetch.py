@@ -9,7 +9,7 @@ from src.utils.logger import get_module_logger
 logger = get_module_logger(__name__, prefix='[DataLoaderFetch]')
 
 # 数据加载层
-class DataLoaderFetch:
+class DataLoader:
     def __init__(self):
         self.client = REDIS_CONNECTOR.get_client()
         self.redis_prefix_manager = REDIS_PREFIX_MANAGER
@@ -39,26 +39,56 @@ class DataLoaderFetch:
             # 从Redis中扫描获取所有代码
             codes = self._get_all_codes(year, months)
         
-        # 加载数据
+        # 使用Redis流水线批量加载数据
         result = {}
+        data_keys = []
+        key_mapping = []
+
+        # 第一步：收集所有需要获取的键
         for m in months:
             for code in codes:
-                try:
-                    # 构建键
-                    slice_key = self.redis_prefix_manager.build_train_slice_key(year, m, code)
-                    counter_key = self.redis_prefix_manager.build_counter_key(year, m, code)
-                    
-                    # 获取数据
-                    data = self.client.get(slice_key)
-                    
-                    # 如果数据存在，则存储并自增计数器
-                    if data is not None:
-                        result[(m, code)] = data
-                        self.client.incr(counter_key)
-                except Exception as e:
-                    logger.warning("加载数据失败 year=%d, month=%d, code=%s: %s", year, m, code, e)
-                    continue
-        
+                slice_key = self.redis_prefix_manager.build_train_slice_key(year, m, code)
+                data_keys.append(slice_key)
+                key_mapping.append((m, code))
+
+        # 第二步：使用pipeline批量获取所有数据
+        try:
+            with self.client.pipeline() as pipe:
+                # 批量添加GET命令
+                for key in data_keys:
+                    pipe.get(key)
+
+                # 执行批量获取
+                responses = pipe.execute()
+
+            # 第三步：处理响应并批量增加计数器
+            counters_to_incr = []
+            for i, response in enumerate(responses):
+                if response is not None:  # 数据存在
+                    month, code = key_mapping[i]
+                    result[(month, code)] = response
+
+                    # 收集需要增加的计数器键
+                    counter_key = self.redis_prefix_manager.build_counter_key(year, month, code)
+                    counters_to_incr.append(counter_key)
+
+            # 第四步：批量增加计数器
+            if counters_to_incr:
+                with self.client.pipeline() as pipe:
+                    for counter_key in counters_to_incr:
+                        pipe.incr(counter_key)
+
+                    counter_responses = pipe.execute()
+
+                logger.debug("批量加载数据: year=%d, 请求=%d, 成功=%d, 计数器更新=%d",
+                           year, len(data_keys), len(result), len(counters_to_incr))
+
+        except Exception as e:
+            logger.warning("批量加载数据失败 year=%d: %s", year, e)
+            # 如果批量操作失败，回退到逐个获取（保证可用性）
+            logger.info("回退到逐个加载模式...")
+            result = self._fetch_data_fallback(year, months, codes)
+
         return result
     
     def _get_all_codes(self, year: int, months: List[int]) -> List[str]:
@@ -93,3 +123,35 @@ class DataLoaderFetch:
                     break
         
         return sorted(list(codes_set))
+
+    def _fetch_data_fallback(self, year: int, months: List[int], codes: List[str]) -> Dict[Tuple[int, str], any]:
+        """
+        回退方法：逐个加载数据（当批量操作失败时使用）
+        :param year: 年份
+        :param months: 月份列表
+        :param codes: 代码列表
+        :return: 数据字典
+        """
+        result = {}
+        for m in months:
+            for code in codes:
+                try:
+                    # 构建键
+                    slice_key = self.redis_prefix_manager.build_train_slice_key(year, m, code)
+                    counter_key = self.redis_prefix_manager.build_counter_key(year, m, code)
+
+                    # 获取数据
+                    data = self.client.get(slice_key)
+
+                    # 如果数据存在，则存储并原子自增计数器
+                    if data is not None:
+                        result[(m, code)] = data
+                        self.client.incr(counter_key)
+                except Exception as e:
+                    logger.warning("加载数据失败(回退模式) year=%d, month=%d, code=%s: %s", year, m, code, e)
+                    continue
+
+        logger.info("回退模式加载完成: year=%d, 成功加载=%d", year, len(result))
+        return result
+
+DATA_LOADER = DataLoader()
