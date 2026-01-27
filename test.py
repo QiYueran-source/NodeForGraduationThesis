@@ -9,7 +9,7 @@ from src.worker.data.redis import REDIS_PREFIX_MANAGER
 from src.worker.data.loader import DATA_LOADER
 
 # 加载数据
-data = DATA_LOADER.fetch_data(2000)
+data = DATA_LOADER.fetch_data(1997)
 
 # 打印数据
 print(data)

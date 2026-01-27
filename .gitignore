@@ -17,3 +17,6 @@ frp/frpc.toml
 
 # py缓存
 __pycache__/
+
+# 帮助文档
+help/

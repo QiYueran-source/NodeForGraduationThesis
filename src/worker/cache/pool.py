@@ -1,6 +1,10 @@
 """
 数据缓存池
-线程安全的数据缓存，用于Worker进程内线程间通信
+线程安全的数据缓存，用于Worker进程内线程间通信  
+包括训练数据和元数据  
+元数据字典：  
+- 1.now_year: 当前年份   
+- 2.start_year: 开始年份  
 """
 # 库
 import threading
@@ -75,7 +79,7 @@ class DataCachePool:
         :param code: 股票代码
         :param year: 年份
         :param month: 月份
-        :return: 数据，如果不存在返回 None
+        :return: 数据，[[因子],收益]
         """
         key = (code, year, month)
         
@@ -138,9 +142,7 @@ class DataCachePool:
         """
         with self._meta_lock:
             self._meta[key] = value
-
-        
-    
+  
     def get_meta(self, key: str) -> Optional[Any]:
         """
         从缓存池获取元数据

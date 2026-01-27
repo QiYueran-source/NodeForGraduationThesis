@@ -23,10 +23,11 @@ class DataMonitor:
         # 当前年份
         self.now_year = None
 
-        # 标志 
-        started = False
+        # 启动标志和线程管理
+        self.started = False
+        self.monitor_thread = None
 
-        # 配置 
+        # 配置
         self._config = {}
 
         # 加载配置
@@ -42,20 +43,38 @@ class DataMonitor:
             raise 
         
         self.now_year = DATA_CACHE_POOL.get_meta('start_year')
+        DATA_CACHE_POOL.put_meta('now_year', self.now_year)
         if not self.now_year:
             logger.error("未设置当前年份")
             raise Exception("未设置当前年份")
 
     def monitor_loop(self):
         """
-        监控数据  
-        如果池中数据少于等于最小数据，则调用loader加载  
-        加载至最大数据   
-        如现在加载到了20
+        监控数据主循环
+        定期检查数据状态，如果数据不足则自动加载
         """
-        while self.started:
-            time.sleep(self._config.get('check_interval', 10))
-            self._check_and_load()
+        logger.info('数据监控循环启动')
+
+        try:
+            while self.started:
+                try:
+                    time.sleep(self._config.get('check_interval', 10))
+
+                    # 检查是否仍在运行（防止虚假唤醒）
+                    if not self.started:
+                        break
+
+                    self._check_and_load()
+
+                except Exception as e:
+                    logger.error(f'数据监控循环中发生错误: {e}')
+                    # 短暂等待后继续，避免错误循环
+                    time.sleep(5)
+
+        except KeyboardInterrupt:
+            logger.info('收到中断信号，停止数据监控')
+
+        logger.info('数据监控循环结束')
 
     def _check_and_load(self):
         """检查数据"""
@@ -74,25 +93,84 @@ class DataMonitor:
                 data = DATA_LOADER.fetch_data(year)
                 items = [{'code': code, 'year': year, 'month': month, 'data': data} for month, code, data in data.items()]
                 DATA_CACHE_POOL.batch_put(items)
-                self.now_year = year # 同步year  
+                self.now_year = year 
+                DATA_CACHE_POOL.put_meta('now_year', year) # 同步now_year
                 logger.debug(f'{year}数据加载完毕')  
 
     def start(self):
+        """
+        启动数据监控器
+        创建并启动监控线程，定期检查数据状态
+        """
         if self.started:
             logger.info('数据监控器已经启动')
             return
-        self.started = True  
-        threading.Thread(
-            target = self.monitor_loop,
-            daemon = True 
-        )
+
+        if self.monitor_thread and self.monitor_thread.is_alive():
+            logger.warning('监控线程仍在运行中')
+            return
+
+        try:
+            # 创建并启动监控线程
+            self.started = True
+            self.monitor_thread = threading.Thread(
+                target=self.monitor_loop,
+                name='DataMonitor',
+                daemon=True
+            )
+            self.monitor_thread.start()
+
+            logger.info('数据监控器启动成功')
+
+        except Exception as e:
+            self.started = False
+            logger.error(f'启动数据监控器失败: {e}')
+            raise
 
     def stop(self):
+        """
+        停止数据监控器
+        优雅地停止监控线程并等待其结束
+        """
         if not self.started:
-            logger.info('数据监控线器已关闭')  
-            return  
-        self.started = False 
-        time.sleep(5)
+            logger.info('数据监控器已关闭')
+            return
+
+        logger.info('正在停止数据监控器...')
+
+        try:
+            # 设置停止标志
+            self.started = False
+
+            # 等待线程结束
+            if self.monitor_thread and self.monitor_thread.is_alive():
+                logger.debug('等待监控线程结束...')
+                self.monitor_thread.join(timeout=10)  # 最多等待10秒
+
+                if self.monitor_thread.is_alive():
+                    logger.warning('监控线程未在规定时间内结束')
+                else:
+                    logger.debug('监控线程已正常结束')
+
+            # 清理线程引用
+            self.monitor_thread = None
+
+            logger.info('数据监控器已停止')
+
+        except Exception as e:
+            logger.error(f'停止数据监控器时发生错误: {e}')
+            # 即使出错也要确保状态正确
+            self.started = False
+            self.monitor_thread = None
+
+    def is_running(self) -> bool:
+        """
+        检查数据监控器是否正在运行
+        :return: 是否正在运行
+        """
+        return (self.started and
+                self.monitor_thread and
+                self.monitor_thread.is_alive())
         # 剩余代码  TODO  
 
 

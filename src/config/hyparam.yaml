@@ -11,3 +11,10 @@ data_thread:
   min_year: 1 # 仅有1年数据后，获取数据  
   max_year: 2 # 每次获取，使得存在至少2年数据   
   check_interval: 10 # 检测间隔(s)  
+
+# agent数据获取配置
+agent:
+  data:
+    retry_delay: 5 # 重试间隔(s)  
+    timeout: 300 # 超时时间(s)  
+    factors_list: ['absacc', 'acc', 'accp', 'ag', 'am', 'ato', 'beta', 'betad', 'betasq', 'bm', 'bm_ia', 'bveg', 'cash', 'cashpr', 'cfdebt', 'cfp', 'cfp_ia', 'chfeps', 'chnanalyst', 'cinvest', 'coskew', 'cr', 'crg', 'ct', 'depr', 'dp', 'ep', 'fgr5yr', 'grcapx', 'grltnoa', 'hire', 'idskew', 'idvol', 'illiq', 'imom', 'invchg', 'invest', 'invg', 'lagretn', 'lev', 'lg', 'lm', 'mom12', 'mom36', 'mom6', 'momchg', 'nanalyst', 'nincr', 'noa', 'ocfp', 'operprof', 'pa', 'pchcapx_ia', 'pchdepr', 'pchgm_pchsale', 'pchsale_pchinvt', 'pchsale_pchrect', 'pchsale_pchxsga', 'pchsaleinv', 'pmg', 'qr', 'qrg', 'rd_mve', 'rdsale', 'realestate', 'roa', 'roe', 'roic', 'rsup', 'salecash', 'saleinv', 'salerec', 'sfe', 'sg', 'sglnvg', 'sgr', 'size', 'size_ia', 'skew', 'sp', 'std_dvol', 'std_turn', 'stdacc', 'tang', 'taxchg', 'turn', 'vol', 'volumed']
