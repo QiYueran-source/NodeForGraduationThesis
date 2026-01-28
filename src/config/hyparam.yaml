@@ -17,4 +17,3 @@ agent:
   data:
     retry_delay: 5 # 重试间隔(s)  
     timeout: 300 # 超时时间(s)  
-    factors_list: ['absacc', 'acc', 'accp', 'ag', 'am', 'ato', 'beta', 'betad', 'betasq', 'bm', 'bm_ia', 'bveg', 'cash', 'cashpr', 'cfdebt', 'cfp', 'cfp_ia', 'chfeps', 'chnanalyst', 'cinvest', 'coskew', 'cr', 'crg', 'ct', 'depr', 'dp', 'ep', 'fgr5yr', 'grcapx', 'grltnoa', 'hire', 'idskew', 'idvol', 'illiq', 'imom', 'invchg', 'invest', 'invg', 'lagretn', 'lev', 'lg', 'lm', 'mom12', 'mom36', 'mom6', 'momchg', 'nanalyst', 'nincr', 'noa', 'ocfp', 'operprof', 'pa', 'pchcapx_ia', 'pchdepr', 'pchgm_pchsale', 'pchsale_pchinvt', 'pchsale_pchrect', 'pchsale_pchxsga', 'pchsaleinv', 'pmg', 'qr', 'qrg', 'rd_mve', 'rdsale', 'realestate', 'roa', 'roe', 'roic', 'rsup', 'salecash', 'saleinv', 'salerec', 'sfe', 'sg', 'sglnvg', 'sgr', 'size', 'size_ia', 'skew', 'sp', 'std_dvol', 'std_turn', 'stdacc', 'tang', 'taxchg', 'turn', 'vol', 'volumed']

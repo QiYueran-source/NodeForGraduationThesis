@@ -1,11 +1,28 @@
 """
 数据缓存池
 线程安全的数据缓存，用于Worker进程内线程间通信  
-包括训练数据和元数据  
-元数据字典：  
-- 1.now_year: 当前年份   
-- 2.start_year: 开始年份  
+包括训练数据、元数据和记录数据  
+train: 由主机提供  
+    - (code, year, month): [[因子],收益]   
+
+meta：由主机提供   
+- task_id: 任务id    
+- start_year: 开始年份  
+- N: 总股票数量    
+- stock_list: 股票列表   
+- factors_list: 因子列表（避免麻烦，直接保存本地）   
+- train_config: 训练配置   
+    - n: 一个组合中的证券数量（算上现金，共n+1个证券）  
+    - max_portfolios_num: 对于总共n个证券，最多可以构建C(N,n)个组合,太大，所以设置最大组合数量    
+    - m: 回看的期数      
+    - mask: 因子掩码，1表示看，0表示不看    
+
+record: 由节点维护  
+- running: 是否正在运行    
+- now_year: 当前年份    
+
 """
+
 # 库
 import threading
 from typing import Dict, Optional, Tuple, Any, List
@@ -22,16 +39,51 @@ class DataCachePool:
         初始化缓存池
         """
         self._cache: Dict[Tuple[str, int, int], Any] = {} # 缓存数据：键为 (code, year, month)，值为数据
-        self._meta: Dict[str:Any] = {} # 元数据字典
+        
+        # 结构化meta数据
+        self._meta: Dict[str, Any] = {
+            'task_id': None,
+            'start_year': None,
+            'N': None,
+            'stock_list': [],
+            'factors_list': [
+                                'absacc', 'acc', 'accp', 'ag', 'am', 'ato', 
+                                'beta', 'betad', 'betasq', 'bm', 'bm_ia', 'bveg',
+                                'cash', 'cashpr', 'cfdebt', 'cfp', 'cfp_ia', 
+                                'chfeps', 'chnanalyst', 'cinvest', 'coskew', 
+                                'cr', 'crg', 'ct', 'depr', 'dp', 'ep', 'fgr5yr', 
+                                'grcapx', 'grltnoa', 'hire', 'idskew', 'idvol', 
+                                'illiq', 'imom', 'invchg', 'invest', 'invg', 'lagretn', 
+                                'lev', 'lg', 'lm', 'mom12', 'mom36', 'mom6', 'momchg', 
+                                'nanalyst', 'nincr', 'noa', 'ocfp', 'operprof', 
+                                'pa', 'pchcapx_ia', 'pchdepr', 'pchgm_pchsale', 
+                                'pchsale_pchinvt', 'pchsale_pchrect', 'pchsale_pchxsga', 
+                                'pchsaleinv', 'pmg', 'qr', 'qrg', 'rd_mve', 'rdsale', 
+                                'realestate', 'roa', 'roe', 'roic', 'rsup', 'salecash', 
+                                'saleinv', 'salerec', 'sfe', 'sg', 'sglnvg', 'sgr', 'size', 
+                                'size_ia', 'skew', 'sp', 'std_dvol', 'std_turn', 'stdacc', 
+                                'tang', 'taxchg', 'turn', 'vol', 'volumed'
+                            ],
+            'train_config': {
+                'n': None,
+                'max_portfolios_num': None,
+                'm': None,
+                'mask': None
+            },
+            'record': {
+                'running': False,
+                'now_year': None
+            }
+        } 
+        
         
         # 线程锁，保护缓存操作
         self._lock = threading.Lock()
         self._meta_lock = threading.Lock()
-        self._meta: Dict[str:Any] = {} # 元数据字典
         
         logger.info("数据缓存池已创建")
     
-    def put(self, code: str, year: int, month: int, data: Any):
+    def put_train(self, code: str, year: int, month: int, data: Any):
         """
         将数据放入缓存池
         :param code: 股票代码
@@ -47,7 +99,7 @@ class DataCachePool:
             self._cache[key] = data
             logger.debug("数据已放入缓存: %s, %s, %s", code, year, month)
     
-    def batch_put(self, items: List[Dict[str, Any]]):
+    def batch_put_train(self, items: List[Dict[str, Any]]):
         """
         批量将数据放入缓存池
         :param items: 数据列表，每个元素包含 code, year, month, data 字段
@@ -73,7 +125,7 @@ class DataCachePool:
             
             logger.info("批量插入完成，共插入 %d 条数据", count)
     
-    def get(self, code: str, year: int, month: int) -> Optional[Any]:
+    def get_train(self, code: str, year: int, month: int) -> Optional[Any]:
         """
         从缓存池获取数据并删除（剔除）
         :param code: 股票代码
@@ -92,7 +144,7 @@ class DataCachePool:
                 logger.debug("缓存中不存在: %s, %s, %s", code, year, month)
                 return None
     
-    def contains(self, year: int, month: Optional[int] = None, code: Optional[str] = None) -> bool:
+    def contains_train(self, year: int, month: Optional[int] = None, code: Optional[str] = None) -> bool:
         """
         检查数据是否存在（支持部分匹配）
         :param year: 年份
@@ -126,7 +178,7 @@ class DataCachePool:
 
             return False
     
-    def count_years(self) -> int:
+    def count_years_train(self) -> int:
         """
         获取年份数量
         :return: 年份数量
@@ -134,31 +186,101 @@ class DataCachePool:
         with self._lock:
             return len(set([year for _, year, _ in self._cache.keys()]))
     
-    def put_meta(self, key: str, value: Any):
-        """
-        将元数据放入缓存池
-        :param key: 键
-        :param value: 值
-        """
+    # ========== Meta数据接口 ==========
+    def get_task_id(self) -> Optional[str]:
+        """获取任务ID"""
         with self._meta_lock:
-            self._meta[key] = value
-  
-    def get_meta(self, key: str) -> Optional[Any]:
-        """
-        从缓存池获取元数据
-        :param key: 键
-        :return: 值
-        """
-        with self._meta_lock:
-            return self._meta.get(key, None)
+            return self._meta.get('task_id')
     
-    def delete_meta(self, key: str):
-        """
-        从缓存池删除元数据
-        :param key: 键
-        """
+    def put_task_id(self, task_id: str):
+        """设置任务ID"""
         with self._meta_lock:
-            self._meta.pop(key, None)
+            self._meta['task_id'] = task_id
+    
+    def get_start_year(self) -> Optional[int]:
+        """获取开始年份"""
+        with self._meta_lock:
+            return self._meta.get('start_year')
+    
+    def put_start_year(self, year: int):
+        """设置开始年份"""
+        with self._meta_lock:
+            self._meta['start_year'] = year
+    
+    def get_N(self) -> Optional[int]:
+        """获取总股票数量"""
+        with self._meta_lock:
+            return self._meta.get('N')
+    
+    def put_N(self, n: int):
+        """设置总股票数量"""
+        with self._meta_lock:
+            self._meta['N'] = n
+    
+    def get_stock_list(self) -> List[str]:
+        """获取股票列表"""
+        with self._meta_lock:
+            return self._meta.get('stock_list', [])
+    
+    def put_stock_list(self, stock_list: List[str]):
+        """设置股票列表"""
+        with self._meta_lock:
+            self._meta['stock_list'] = stock_list
+    
+    def get_train_config(self) -> Optional[Dict]:
+        """获取训练配置"""
+        with self._meta_lock:
+            return self._meta.get('train_config')
+    
+    def put_train_config(self, config: Dict):
+        """设置训练配置"""
+        with self._meta_lock:
+            self._meta['train_config'] = config
+    
+    def get_factors_list(self) -> List[str]:
+        """获取因子列表"""
+        with self._meta_lock:
+            return self._meta.get('factors_list', [])
+    
+    def put_factors_list(self, factors_list: List[str]):
+        """设置因子列表"""
+        with self._meta_lock:
+            self._meta['factors_list'] = factors_list
+    
+    # =========== 记录数据接口 ============
+    def get_record(self) -> Dict:
+        """获取运行记录"""
+        with self._meta_lock:
+            record = self._meta.get('record', {})
+            if not isinstance(record, dict):
+                self._meta['record'] = {'running': False, 'now_year': None}
+                return self._meta['record']
+            return record
+    
+    def put_record(self, key: str, value: Any):
+        """设置运行记录中的某个字段"""
+        with self._meta_lock:
+            if 'record' not in self._meta or not isinstance(self._meta['record'], dict):
+                self._meta['record'] = {'running': False, 'now_year': None}
+            self._meta['record'][key] = value
+    
+    def get_now_year(self) -> Optional[int]:
+        """获取当前年份"""
+        record = self.get_record()
+        return record.get('now_year') if isinstance(record, dict) else None
+    
+    def put_now_year(self, year: int):
+        """设置当前年份"""
+        self.put_record('now_year', year)
+    
+    def get_running(self) -> bool:
+        """获取运行状态"""
+        record = self.get_record()
+        return record.get('running', False) if isinstance(record, dict) else False
+    
+    def put_running(self, running: bool):
+        """设置运行状态"""
+        self.put_record('running', running)
     
 # 全局实例  
 DATA_CACHE_POOL = DataCachePool() 

@@ -42,11 +42,12 @@ class DataMonitor:
             logger.error(f"加载配置失败: {e}")
             raise 
         
-        self.now_year = DATA_CACHE_POOL.get_meta('start_year')
-        DATA_CACHE_POOL.put_meta('now_year', self.now_year)
+        self.now_year = DATA_CACHE_POOL.get_start_year()
         if not self.now_year:
-            logger.error("未设置当前年份")
-            raise Exception("未设置当前年份")
+            logger.error("未设置开始年份")
+            raise Exception("未设置开始年份")
+        # 初始化now_year为start_year
+        DATA_CACHE_POOL.put_now_year(self.now_year)
 
     def monitor_loop(self):
         """
@@ -78,12 +79,12 @@ class DataMonitor:
 
     def _check_and_load(self):
         """检查数据"""
-        now_year = DATA_CACHE_POOL.get_meta('now_year')
+        now_year = DATA_CACHE_POOL.get_now_year()
         if not now_year:
             logger.error("未设置当前年份")
             raise Exception("未设置当前年份")
         
-        years = DATA_CACHE_POOL.count_years()
+        years = DATA_CACHE_POOL.count_years_train()
         min_year = self._config.get('min_year', 1)  
         max_year = self._config.get('max_year', 2)    
         if years < min_year:
@@ -92,9 +93,9 @@ class DataMonitor:
             for year in range(now_year + 1, now_year + need_load_years + 1):
                 data = DATA_LOADER.fetch_data(year)
                 items = [{'code': code, 'year': year, 'month': month, 'data': data} for month, code, data in data.items()]
-                DATA_CACHE_POOL.batch_put(items)
+                DATA_CACHE_POOL.batch_put_train(items)
                 self.now_year = year 
-                DATA_CACHE_POOL.put_meta('now_year', year) # 同步now_year
+                DATA_CACHE_POOL.put_now_year(year) # 同步now_year
                 logger.debug(f'{year}数据加载完毕')  
 
     def start(self):

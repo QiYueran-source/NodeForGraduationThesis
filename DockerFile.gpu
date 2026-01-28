@@ -1,0 +1,68 @@
+FROM swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
+
+# 安装 Python 3.11
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 \
+    python3.11-dev \
+    python3-pip \
+    apt-transport-https \
+    ca-certificates \
+    curl \
+    wget \
+    git \
+    libgomp1 \
+    procps \
+    net-tools \
+    iproute2 \
+    sudo \
+    jq \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN ln -sf /usr/bin/python3.11 /usr/bin/python && \
+    ln -sf /usr/bin/pip3 /usr/bin/pip
+
+# 安装 uv
+RUN pip install --no-cache-dir uv \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    --trusted-host pypi.tuna.tsinghua.edu.cn
+
+WORKDIR /Node
+
+# 创建用户（同 CPU 版本）
+RUN useradd --create-home --shell /bin/bash agentuser && \
+    chown -R agentuser:agentuser /Node && \
+    usermod -aG sudo agentuser && \
+    echo "agentuser ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/agentuser && \
+    chmod 0440 /etc/sudoers.d/agentuser
+
+COPY . .
+
+RUN chown -R agentuser:agentuser /Node && \
+    chmod -R 755 /Node && \
+    chmod +x /Node/scripts/*.sh /Node/frp/frpc
+
+USER agentuser
+
+# 安装依赖 - GPU 版本
+RUN sudo uv pip install --system --no-cache -r /Node/requirements.txt \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    --trusted-host pypi.tuna.tsinghua.edu.cn
+
+# 安装 PyTorch GPU 版本（仅 torch，使用南京大学镜像源）
+RUN sudo uv pip install --system --no-cache torch==2.4.1 \
+    --index-url https://mirrors.nju.edu.cn/pytorch/whl/cu121 \
+    --extra-index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+    --trusted-host mirrors.nju.edu.cn \
+    --trusted-host pypi.tuna.tsinghua.edu.cn
+
+RUN sudo uv pip install --system --no-cache stable-baselines3[extra] gymnasium \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    --trusted-host pypi.tuna.tsinghua.edu.cn
+
+ENV PYTHONPATH=/Node
+ENV PYTHONUNBUFFERED=1
+ENV NODE_TYPE=agent_trainer
+
+EXPOSE 8191-8220
+
+ENTRYPOINT ["/Node/scripts/start.sh"]

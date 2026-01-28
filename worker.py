@@ -6,6 +6,9 @@ worker
 |- trainer  
 |- monitor  
 
+worker工作流程  
+- 设置种子  
+- ...  
 """
 class Worker:
     pass 

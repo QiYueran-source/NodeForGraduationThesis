@@ -1,0 +1,184 @@
+"""
+数据适配器，使用AgentDataFetcher获取数据，并转换为Agent可以使用的格式  
+"""
+# 库 
+import time
+import datetime as dt 
+import threading
+import yaml  
+import random 
+from typing import Tuple, List
+
+# 组件 
+from src.worker.cache import DATA_CACHE_POOL
+
+# 日志 
+from src.utils.logger import get_module_logger
+logger = get_module_logger(__name__, prefix='AgentDataAdapter')
+
+class AgentDataAdapter:
+    def __init__(self):
+        # 训练配置   
+        self.n = DATA_CACHE_POOL.get_train_config().get('n',1) #一次决策的证券数量  
+        self.N = DATA_CACHE_POOL.get_N() #总股票数量  
+        self.m = DATA_CACHE_POOL.get_train_config().get('m',1) #回看的期数    
+        self.mask = DATA_CACHE_POOL.get_train_config().get('mask',[1]*len(DATA_CACHE_POOL.get_factors_list())) #因子掩码，1表示看，0表示不看    
+        self.max_portfolios_num = DATA_CACHE_POOL.get_train_config().get('max_portfolios_num',1000000) #对于总共n个证券，最多可以构建C(N,n)个组合,太大，所以设置最大组合数量 
+
+        # 配置 
+        self._config = {}    
+
+        # 训练数据池  
+        # 字典：key为(year,month,code)，value为数据    
+        self._train_data_pool = {}   
+        self._deleted_train_data_pool = {}  # 字典：key为(year,month,code)，value为True
+
+        # 组合池
+        self._portfolio_pool: List[List[str]] = []  # 一个组合为一个股票代码列表  
+
+        # 锁
+        self._lock = threading.Lock()  
+
+    def _load_config(self):
+        """加载配置"""
+        try:
+            with open('src/config/hyparam.yaml', 'r', encoding='utf-8') as f:
+                self._config = yaml.safe_load(f).get('agent_data', {})
+        except Exception as e:
+            logger.error(f"加载配置失败: {e}")
+            raise 
+
+    def _sample_portfolios(self, num: int):
+        """
+        采样若干个组合
+        """
+        rst_set = set() # 去重 
+        while len(rst_set) < num:
+            rst_set.add(tuple(random.sample(self._portfolio_pool, self.n)))
+        self._portfolio_pool = list(rst_set)
+        logger.debug(f"采样{num}个组合完成")
+        
+        
+    # ========== 训练数据接口 ==========
+    def contains_train_data(self, year: int, month: int, code: str) -> bool:
+        """
+        判断数据是否存在agent缓存池   
+        """
+        with self._lock:
+            data = self._train_data_pool.get((year,month,code),None)
+            if data is not None:
+                return True
+            return False
+
+    def get_train_data(self, year: int, month: int, code: str) -> Tuple[List[float], float]:
+        """
+        按year,month,code获取数据  
+        1.先判断在不在agent缓存池    
+        如果在，检查是否已删除，如果已删除则报错；否则返回
+        2.判断在不在worker缓存池  
+        如果在，获取，检查是否已删除，如果已删除则报错；否则保存到agent缓存池并返回
+        3.如果不在，则判断  
+        查询的数据是否大于meta:now_year(即查询的数据还未加载)  
+        如果大于，则等待，直到查询到数据，检查是否已删除，如果已删除则报错
+        4.否则，报错
+        """
+        key = (year, month, code)
+        
+        # 首先检查是否已被删除
+        if self.is_train_data_deleted(year, month, code):
+            logger.error(f"尝试获取已删除的数据: {year}, {month}, {code}")
+            raise Exception(f"数据已被删除，无法获取: {year}, {month}, {code}")
+        
+        # 判断数据是否存在，存在则获取
+        if self.contains_train_data(year, month, code):
+            return self._train_data_pool.get(key)
+        
+        # 判断是否在worker，是则获取
+        if DATA_CACHE_POOL.contains_train(year, month, code):
+            data = DATA_CACHE_POOL.get_train(code, year, month)
+            if data:
+                # 再次检查是否已被删除（可能在获取过程中被删除）
+                if self.is_train_data_deleted(year, month, code):
+                    logger.error(f"尝试获取已删除的数据: {year}, {month}, {code}")
+                    raise Exception(f"数据已被删除，无法获取: {year}, {month}, {code}")
+                factors, rtr = data[0], data[1]
+                self._train_data_pool[key] = (factors, rtr)
+                return factors, rtr
+        
+        # 判断是否大于now_year,是则循环等待
+        now_year = DATA_CACHE_POOL.get_now_year()
+        if now_year and year > now_year:
+            logger.debug(f"数据大于now_year，等待数据加载: {year} > {now_year}")
+            # 循环等待 
+            start_time = dt.datetime.now() # 阻塞，直到数据加载完成，超时则报错  
+            while not DATA_CACHE_POOL.contains_train(year, month, code): 
+                # 每次循环，检查是否已被删除  
+                if self.is_train_data_deleted(year, month, code):
+                    logger.error(f"尝试获取已删除的数据: {year}, {month}, {code}")
+                    raise Exception(f"数据已被删除，无法获取: {year}, {month}, {code}")
+                time.sleep(self._config.get('retry_delay', 5))
+                now = dt.datetime.now()
+                if now - start_time > dt.timedelta(seconds=self._config.get('timeout', 300)):
+                    logger.error(f"获取数据超时: {year}, {month}, {code}")
+                    raise Exception(f"获取数据超时: {year}, {month}, {code}")
+            data = DATA_CACHE_POOL.get_train(code, year, month)
+            if data:
+                # 再次检查是否已被删除（可能在等待过程中被删除）
+                if self.is_train_data_deleted(year, month, code):
+                    logger.error(f"尝试获取已删除的数据: {year}, {month}, {code}")
+                    raise Exception(f"数据已被删除，无法获取: {year}, {month}, {code}")
+                factors, rtr = data[0], data[1]
+                self._train_data_pool[key] = (factors, rtr)
+                return factors, rtr
+
+        # 都不在，报错
+        logger.error(f"数据不在agent缓存池，也不在worker缓存池，且大于now_year: {year}, {month}, {code}")
+        raise Exception(f"数据不在agent缓存池，也不在worker缓存池，且大于now_year: {year}, {month}, {code}")
+        
+    def delete_train_data(self, year:int, month:int, code: str) -> bool:
+        """
+        删除数据
+        删除后，将删除的键添加到_deleted_train_data_pool中
+        """
+        with self._lock:
+            key = (year, month, code)
+            if self.contains_train_data(year, month, code):
+                del self._train_data_pool[key]
+                # 将删除的键添加到_deleted_train_data_pool
+                self._deleted_train_data_pool[key] = True
+                logger.debug(f"数据已删除并记录到删除池: {year}, {month}, {code}")
+                return True
+            return False
+    
+    def is_train_data_deleted(self, year: int, month: int, code: str) -> bool:
+        """
+        检查数据是否已被删除
+        :param year: 年份
+        :param month: 月份
+        :param code: 股票代码
+        :return: 是否已被删除
+        """
+        with self._lock:
+            key = (year, month, code)
+            return key in self._deleted_train_data_pool
+    
+    # ========== 组合池接口 ==========
+    def get_portfolio_pool(self) -> List[List[str]]:
+        """
+        获取证券池
+        """
+        with self._lock:
+            return self._portfolio_pool
+
+    # ========== 训练窗口接口 ========== 
+    def roll(self):
+        """
+        滚动训练窗口
+        """
+        pass 
+    
+        
+
+    
+        
+
