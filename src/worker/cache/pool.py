@@ -11,7 +11,7 @@ meta：由主机提供
 - N: 总股票数量    
 - stock_list: 股票列表   
 - factors_list: 因子列表（避免麻烦，直接保存本地）   
-- earliest_year_month: 最早的年份和月份,用datetime.date表示，默认为1号  
+- earliest_year_month: 最早的年份和月份,(year, month)  
 - train_config: 训练配置   
     - n: 一个组合中的证券数量（算上现金，共n+1个证券）  
     - max_portfolios_num: 对于总共n个证券，最多可以构建C(N,n)个组合,太大，所以设置最大组合数量    
@@ -20,7 +20,7 @@ meta：由主机提供
 
 record: 由节点维护  
 - running: 是否正在运行    
-- now_year_month: 当前窗口(year,month)   
+- current_year_month: 当前窗口(year,month)   
  
 """
 
@@ -75,7 +75,7 @@ class DataCachePool:
             },
             'record': {
                 'running': False,
-                'now_year': None
+                'current_year_month': None
             }
         } 
         
@@ -250,23 +250,23 @@ class DataCachePool:
         with self._meta_lock:
             self._meta['factors_list'] = factors_list
     
-    def get_earliest_year_month(self) -> Optional[dt.date]:
+    def get_earliest_year_month(self) -> Optional[Tuple[int, int]]:
         """获取最早的年份和月份"""
         with self._meta_lock:
             return self._meta.get('earliest_year_month')
     
-    def put_earliest_year_month(self, date: dt.date):
+    def put_earliest_year_month(self, year, month):
         """设置最早的年份和月份"""
         with self._meta_lock:
-            self._meta['earliest_year_month'] = date
-            
+            self._meta['earliest_year_month'] = (year, month)
+
     # =========== 记录数据接口 ============
     def get_record(self) -> Dict:
         """获取运行记录"""
         with self._meta_lock:
             record = self._meta.get('record', {})
             if not isinstance(record, dict):
-                self._meta['record'] = {'running': False, 'now_year': None}
+                self._meta['record'] = {'running': False, 'current_year_month': None}
                 return self._meta['record']
             return record
     
@@ -274,17 +274,17 @@ class DataCachePool:
         """设置运行记录中的某个字段"""
         with self._meta_lock:
             if 'record' not in self._meta or not isinstance(self._meta['record'], dict):
-                self._meta['record'] = {'running': False, 'now_year': None}
+                self._meta['record'] = {'running': False, 'current_year_month': None}
             self._meta['record'][key] = value
     
-    def get_now_year_month(self) -> Optional[Tuple[int, int]]:
-        """获取当前年份"""
+    def get_current_year_month(self) -> Optional[Tuple[int, int]]:
+        """获取当前窗口 (year, month)"""
         record = self.get_record()
-        return record.get('now_year_month') if isinstance(record, dict) else None
+        return record.get('current_year_month') if isinstance(record, dict) else None
     
-    def put_now_year_month(self, year: int, month: int):
-        """设置当前年份"""
-        self.put_record('now_year_month', (year, month))
+    def put_current_year_month(self, year: int, month: int):
+        """设置当前窗口 (year, month)"""
+        self.put_record('current_year_month', (year, month))
     
     def get_running(self) -> bool:
         """获取运行状态"""

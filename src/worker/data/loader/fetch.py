@@ -26,6 +26,7 @@ class DataLoader:
         :param code_list: 股票代码列表，如果提供则只加载这些代码，否则加载所有代码
         :return: 字典，键为(month, code)元组，值为数据
         """
+        logger.debug("fetch_data 开始: year=%s, month=%s, code_list=%s", year, month, "指定%d只" % len(code_list) if code_list else "全部")
         # 确定要加载的月份列表
         if month is not None:
             months = [month]
@@ -35,9 +36,11 @@ class DataLoader:
         # 确定要加载的代码列表
         if code_list is not None:
             codes = code_list
+            logger.debug("使用指定代码列表: %d 只", len(codes))
         else:
             # 从Redis中扫描获取所有代码
             codes = self._get_all_codes(year, months)
+            logger.debug("Redis 扫描得到代码数: year=%d, codes=%d", year, len(codes))
         
         # 使用Redis流水线批量加载数据
         result = {}
@@ -80,8 +83,8 @@ class DataLoader:
 
                     counter_responses = pipe.execute()
 
-                logger.debug("批量加载数据: year=%d, 请求=%d, 成功=%d, 计数器更新=%d",
-                           year, len(data_keys), len(result), len(counters_to_incr))
+                logger.info("批量加载数据: year=%d, 请求=%d, 成功=%d, 计数器更新=%d",
+                            year, len(data_keys), len(result), len(counters_to_incr))
 
         except Exception as e:
             logger.warning("批量加载数据失败 year=%d: %s", year, e)
@@ -89,6 +92,7 @@ class DataLoader:
             logger.info("回退到逐个加载模式...")
             result = self._fetch_data_fallback(year, months, codes)
 
+        logger.debug("fetch_data 结束: year=%d, 返回条数=%d", year, len(result))
         return result
     
     def _get_all_codes(self, year: int, months: List[int]) -> List[str]:
@@ -121,8 +125,11 @@ class DataLoader:
                 
                 if cursor == 0:
                     break
+            logger.debug("_get_all_codes 月份 %s: 扫描到 %d 个代码", month_str, len(codes_set))
         
-        return sorted(list(codes_set))
+        out = sorted(list(codes_set))
+        logger.debug("_get_all_codes 合计: year=%d, 代码数=%d", year, len(out))
+        return out
 
     def _fetch_data_fallback(self, year: int, months: List[int], codes: List[str]) -> Dict[Tuple[int, str], any]:
         """
@@ -152,6 +159,7 @@ class DataLoader:
                     continue
 
         logger.info("回退模式加载完成: year=%d, 成功加载=%d", year, len(result))
+        logger.debug("回退模式 fetch_data 结束: year=%d", year)
         return result
 
 DATA_LOADER = DataLoader()

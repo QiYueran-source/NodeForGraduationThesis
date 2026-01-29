@@ -6,11 +6,10 @@ import torch
 import math  
 import time
 import datetime as dt 
-import dateutil.relativedelta as dr 
 import threading
 import yaml  
 import random 
-from typing import Tuple, List
+from typing import Tuple, List, Optional
 
 # 组件 
 from src.worker.cache import DATA_CACHE_POOL
@@ -38,8 +37,9 @@ class AgentDataAdapter:
         self._train_data_pool = {}   
         self._deleted_train_data_pool = {}  # 字典：key为(year,month,code)，value为True
 
-        # 组合池
-        self._portfolio_pool: List[List[str]] = []  # 一个组合为一个股票代码列表  
+        # 组合池（先填股票列表供采样；采样后变为组合列表）
+        stock_list = DATA_CACHE_POOL.get_stock_list() or []
+        self._portfolio_pool: List = list(stock_list)  # 扁平列表供 _sample_portfolios 采样 n 只标的
         self._portfolio_cursor = 0 # 组合池的游标  
 
         # 锁
@@ -78,16 +78,43 @@ class AgentDataAdapter:
         self._portfolio_pool = list(rst_set)
         logger.debug(f"采样{num}个组合完成")
 
+    @staticmethod
+    def _roll_year_month(ym: Tuple[int, int], rolling_m: int) -> Tuple[int, int]:
+        """
+        滚动年月的方法  
+        ym: 年月  
+        rolling_m: 滚动月数，可与为负数  
+        return: 滚动后的年月  
+        """
+        year, month = ym
+        total_month = year * 12 + (month - 1)   # 0-based 月
+        total_month += rolling_m
+        year = total_month // 12
+        month = total_month % 12 + 1
+        return (year, month)
+
+    @staticmethod
+    def _year_month_greater(ym1: Tuple[int, int], ym2: Tuple[int, int]) -> bool:
+        """
+        判断年月是否大于  
+        ym1: 年月1  
+        ym2: 年月2  
+        return: 是否大于  
+        """
+        return ym1[0] > ym2[0] or (ym1[0] == ym2[0] and ym1[1] > ym2[1])
+
     def _set_current_year_month(self):
         """
-        设置当前窗口  
-        根据start_year、m 和 earliest_year_month，设置当前窗口  
-        计算最早的可用日期earlist_available_year_month，计算方法为：earlist_available_date = earliest_year_month + timedelta(months=m-1)    
-        对比(start_year, 1, 1) 和 earliest_available_date，取较大者  
+        初始化当前窗口  
         """
-        earliest_available_date = self.earliest_year_month + dr.relativedelta(months = self.m-1)
-        current_year_month = max(dt.date(self.start_year, 1, 1), earliest_available_date)
-        self._current_year_month = current_year_month
+        default_start_year_month = (self.start_year, 1)  
+        earliest_available_year_month = self._roll_year_month(self.earliest_year_month, self.m - 1)
+        if AgentDataAdapter._year_month_greater(earliest_available_year_month, default_start_year_month):
+            self._current_year_month = earliest_available_year_month
+        else:
+            self._current_year_month = default_start_year_month
+        
+        
         
     # ========== 训练数据接口 ==========
     def contains_train_data(self, year: int, month: int, code: str) -> bool:
@@ -100,7 +127,7 @@ class AgentDataAdapter:
                 return True
             return False
 
-    def get_train_data(self, year: int, month: int, code: str) -> Tuple[List[float], float]:
+    def get_train_data(self, year: int, month: int, code: str) -> Optional[Tuple[List[float], float]]:
         """
         按year,month,code获取数据  
         1.先判断在不在agent缓存池    
@@ -108,9 +135,9 @@ class AgentDataAdapter:
         2.判断在不在worker缓存池  
         如果在，获取，检查是否已删除，如果已删除则报错；否则保存到agent缓存池并返回
         3.如果不在，则判断  
-        查询的数据是否大于meta:now_year(即查询的数据还未加载)  
+        查询的数据是否大于 meta 当前窗口 current_year_month（即查询的数据还未加载）  
         如果大于，则等待，直到查询到数据，检查是否已删除，如果已删除则报错
-        4.否则，报错
+        4.否则，返回 None（数据不存在，如窗口不足 m 期）
         """
         key = (year, month, code)
         
@@ -135,10 +162,10 @@ class AgentDataAdapter:
                 self._train_data_pool[key] = (factors, rtr)
                 return factors, rtr
         
-        # 判断是否大于now_year,是则循环等待
-        now_year = DATA_CACHE_POOL.get_now_year()
-        if now_year and year > now_year:
-            logger.debug(f"数据大于now_year，等待数据加载: {year} > {now_year}")
+        # 判断是否大于当前窗口 current_year_month，是则循环等待
+        current_ym = DATA_CACHE_POOL.get_current_year_month()
+        if current_ym and self._year_month_greater((year, month), current_ym):
+            logger.debug(f"数据大于当前窗口，等待数据加载: ({year}, {month}) > {current_ym}")
             # 循环等待 
             start_time = dt.datetime.now() # 阻塞，直到数据加载完成，超时则报错  
             while not DATA_CACHE_POOL.contains_train(year, month, code): 
@@ -161,9 +188,9 @@ class AgentDataAdapter:
                 self._train_data_pool[key] = (factors, rtr)
                 return factors, rtr
 
-        # 都不在，报错
-        logger.error(f"数据不在agent缓存池，也不在worker缓存池，且大于now_year: {year}, {month}, {code}")
-        raise Exception(f"数据不在agent缓存池，也不在worker缓存池，且大于now_year: {year}, {month}, {code}")
+        # 都不在，返回 None（数据不存在）
+        logger.debug(f"数据不存在，返回 None: {year}, {month}, {code}")
+        return None
         
     def delete_train_data(self, year:int, month:int, code: str) -> bool:
         """
@@ -172,7 +199,7 @@ class AgentDataAdapter:
         """
         with self._data_pool_lock:
             key = (year, month, code)
-            if self.contains_train_data(year, month, code):
+            if key in self._train_data_pool:
                 del self._train_data_pool[key]
                 # 将删除的键添加到_deleted_train_data_pool
                 self._deleted_train_data_pool[key] = True
@@ -223,18 +250,28 @@ class AgentDataAdapter:
 
     def get_window_factors_tensor(self, portfolio: List[str]) -> torch.Tensor:
         """
-        获取训练窗口的因子  
-        根据portfolio，获取m期因子的二维tensor，若不足m期则返回空tensor  
+        获取训练窗口的因子   
+        即current_year_month 到 current_year_month - m + 1 的因子的三维tensor  
+        根据portfolio，获取m期因子的三维tensor，若不足m期则返回空tensor  
         """
-        m = self.m   
-        
-        factors_in_each_month = []  
+        factors_tensor = []
         for code in portfolio:
-            for month in range(m):
-                factors = self.get_train_data(code, month)
-                factors_in_each_month.append(factors)
-        return torch.tensor(factors_in_each_month, dtype=torch.float32)
+            code_factors = []
+            for i in range(self.m):
+                year, month = self._roll_year_month(self._current_year_month, -i)
+                result = self.get_train_data(year, month, code)
+                if result is None:
+                    return torch.tensor([], dtype=torch.float32)
+                factors, rtr = result
+                code_factors.append(factors)
+            factors_tensor.append(code_factors)
+        return torch.tensor(factors_tensor, dtype=torch.float32)
+        
 
+        
+
+        
+AGENT_DATA_ADAPTER = AgentDataAdapter()
 
     
         

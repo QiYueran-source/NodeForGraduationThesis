@@ -1,3 +1,3 @@
-from src.worker.agent.data.getter import AGENT_DATA_GETTER
+from src.worker.agent.data.adapter import AGENT_DATA_ADAPTER
 
-__all__ = ['AGENT_DATA_GETTER']
+__all__ = ['AGENT_DATA_ADAPTER']

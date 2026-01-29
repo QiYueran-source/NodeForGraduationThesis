@@ -42,12 +42,14 @@ class DataMonitor:
             logger.error(f"加载配置失败: {e}")
             raise 
         
-        self.now_year = DATA_CACHE_POOL.get_start_year()
+        self.now_year = DATA_CACHE_POOL.get_start_year() - 1 # 比如1997年开始，则设置当前为1996
         if not self.now_year:
             logger.error("未设置开始年份")
             raise Exception("未设置开始年份")
-        # 初始化now_year为start_year
-        DATA_CACHE_POOL.put_now_year(self.now_year)
+        # 初始化当前窗口为 start_year 年 1 月
+        DATA_CACHE_POOL.put_current_year_month(self.now_year, 1)
+        logger.debug("_load_config 完成: start_year=%s, check_interval=%s, min_year=%s, max_year=%s",
+                    self.now_year, self._config.get('check_interval'), self._config.get('min_year'), self._config.get('max_year'))
 
     def monitor_loop(self):
         """
@@ -65,6 +67,7 @@ class DataMonitor:
                     if not self.started:
                         break
 
+                    logger.debug("监控周期: 开始检查数据")
                     self._check_and_load()
 
                 except Exception as e:
@@ -79,24 +82,32 @@ class DataMonitor:
 
     def _check_and_load(self):
         """检查数据"""
-        now_year = DATA_CACHE_POOL.get_now_year()
-        if not now_year:
-            logger.error("未设置当前年份")
-            raise Exception("未设置当前年份")
-        
+        current_ym = DATA_CACHE_POOL.get_current_year_month()
+        if not current_ym:
+            logger.error("未设置当前窗口 (year, month)")
+            raise Exception("未设置当前窗口 (year, month)")
+        now_year = current_ym[0]
+        logger.debug("_check_and_load: 当前窗口 current_year_month=%s", current_ym)
+
         years = DATA_CACHE_POOL.count_years_train()
-        min_year = self._config.get('min_year', 1)  
-        max_year = self._config.get('max_year', 2)    
-        if years < min_year:
-            logger.info(f"年份数量不足，需要加载数据: {years} <= {min_year}")
-            need_load_years = max_year - years # 需要加载的年份数量  
+        min_year = self._config.get('min_year', 1)
+        max_year = self._config.get('max_year', 2)
+        logger.debug("_check_and_load: 缓存年份数 years=%d, min_year=%d, max_year=%d", years, min_year, max_year)
+
+        if years <= min_year:
+            need_load_years = max_year - years
+            logger.info("年份数量不足，需要加载数据: years=%d <= min_year=%d, 将加载 %d 年", years, min_year, need_load_years)
             for year in range(now_year + 1, now_year + need_load_years + 1):
+                logger.debug("开始从 loader 拉取 year=%d", year)
                 data = DATA_LOADER.fetch_data(year)
-                items = [{'code': code, 'year': year, 'month': month, 'data': data} for month, code, data in data.items()]
+                logger.debug("loader 返回 year=%d 条数=%d", year, len(data))
+                items = [{'code': code, 'year': year, 'month': month, 'data': data} for (month, code), data in data.items()]
                 DATA_CACHE_POOL.batch_put_train(items)
-                self.now_year = year 
-                DATA_CACHE_POOL.put_now_year(year) # 同步now_year
-                logger.debug(f'{year}数据加载完毕')  
+                self.now_year = year
+                DATA_CACHE_POOL.put_current_year_month(year, 12)
+                logger.info("数据已写入缓存池: year=%d, 条数=%d, 当前窗口=(%d, 12)", year, len(items), year)
+        else:
+            logger.debug("_check_and_load: 年份充足，无需加载")  
 
     def start(self):
         """
