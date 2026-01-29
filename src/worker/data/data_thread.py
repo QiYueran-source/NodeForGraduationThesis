@@ -11,11 +11,11 @@ from src.utils.logger import get_module_logger
 logger = get_module_logger(__name__,'DataThread')
 
 # 主函数
-def start():
+def data_thread_start():
     logger.info('数据层线程开始执行')
     DATA_MONITOR.start()  
 
-def stop():
+def data_thread_stop():
     logger.info('数据层线程停止执行')
     DATA_MONITOR.stop()
 

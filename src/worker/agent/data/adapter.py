@@ -2,8 +2,11 @@
 数据适配器，使用AgentDataFetcher获取数据，并转换为Agent可以使用的格式  
 """
 # 库 
+import torch 
+import math  
 import time
 import datetime as dt 
+import dateutil.relativedelta as dr 
 import threading
 import yaml  
 import random 
@@ -24,6 +27,8 @@ class AgentDataAdapter:
         self.m = DATA_CACHE_POOL.get_train_config().get('m',1) #回看的期数    
         self.mask = DATA_CACHE_POOL.get_train_config().get('mask',[1]*len(DATA_CACHE_POOL.get_factors_list())) #因子掩码，1表示看，0表示不看    
         self.max_portfolios_num = DATA_CACHE_POOL.get_train_config().get('max_portfolios_num',1000000) #对于总共n个证券，最多可以构建C(N,n)个组合,太大，所以设置最大组合数量 
+        self.start_year = DATA_CACHE_POOL.get_start_year() #开始年份
+        self.earliest_year_month = DATA_CACHE_POOL.get_earliest_year_month() #最早的年份和月份    
 
         # 配置 
         self._config = {}    
@@ -35,9 +40,23 @@ class AgentDataAdapter:
 
         # 组合池
         self._portfolio_pool: List[List[str]] = []  # 一个组合为一个股票代码列表  
+        self._portfolio_cursor = 0 # 组合池的游标  
 
         # 锁
-        self._lock = threading.Lock()  
+        self._data_pool_lock = threading.Lock() # 保护数据池的锁  
+        self._portfolio_pool_lock = threading.Lock() # 保护组合池的锁  
+
+        # 当前窗口
+        self._current_year_month = self.earliest_year_month  
+
+        # 加载配置
+        self._load_config()
+
+        # 加载股票池
+        self._sample_portfolios()
+
+        # 设置当前窗口
+        self._set_current_year_month()
 
     def _load_config(self):
         """加载配置"""
@@ -48,23 +67,34 @@ class AgentDataAdapter:
             logger.error(f"加载配置失败: {e}")
             raise 
 
-    def _sample_portfolios(self, num: int):
+    def _sample_portfolios(self):
         """
         采样若干个组合
         """
+        num = max(self.max_portfolios_num, math.comb(self.N, self.n))
         rst_set = set() # 去重 
         while len(rst_set) < num:
             rst_set.add(tuple(random.sample(self._portfolio_pool, self.n)))
         self._portfolio_pool = list(rst_set)
         logger.debug(f"采样{num}个组合完成")
-        
+
+    def _set_current_year_month(self):
+        """
+        设置当前窗口  
+        根据start_year、m 和 earliest_year_month，设置当前窗口  
+        计算最早的可用日期earlist_available_year_month，计算方法为：earlist_available_date = earliest_year_month + timedelta(months=m-1)    
+        对比(start_year, 1, 1) 和 earliest_available_date，取较大者  
+        """
+        earliest_available_date = self.earliest_year_month + dr.relativedelta(months = self.m-1)
+        current_year_month = max(dt.date(self.start_year, 1, 1), earliest_available_date)
+        self._current_year_month = current_year_month
         
     # ========== 训练数据接口 ==========
     def contains_train_data(self, year: int, month: int, code: str) -> bool:
         """
         判断数据是否存在agent缓存池   
         """
-        with self._lock:
+        with self._data_pool_lock:
             data = self._train_data_pool.get((year,month,code),None)
             if data is not None:
                 return True
@@ -140,7 +170,7 @@ class AgentDataAdapter:
         删除数据
         删除后，将删除的键添加到_deleted_train_data_pool中
         """
-        with self._lock:
+        with self._data_pool_lock:
             key = (year, month, code)
             if self.contains_train_data(year, month, code):
                 del self._train_data_pool[key]
@@ -158,7 +188,7 @@ class AgentDataAdapter:
         :param code: 股票代码
         :return: 是否已被删除
         """
-        with self._lock:
+        with self._data_pool_lock:
             key = (year, month, code)
             return key in self._deleted_train_data_pool
     
@@ -167,7 +197,7 @@ class AgentDataAdapter:
         """
         获取证券池
         """
-        with self._lock:
+        with self._portfolio_pool_lock:
             return self._portfolio_pool
 
     # ========== 训练窗口接口 ========== 
@@ -176,6 +206,36 @@ class AgentDataAdapter:
         滚动训练窗口
         """
         pass 
+
+    def get_window_portfolio(self) -> List[str]:
+        """
+        获取训练窗口的组合  
+        加锁，获取第cursor个组合，cursor+=1  
+        如果cursor>=len(组合池)，则返回空列表  
+        """
+        with self._portfolio_pool_lock:
+            cursor = self._portfolio_cursor
+            if cursor >= len(self._portfolio_pool):
+                return []
+            portfolio = self._portfolio_pool[cursor]
+            self._portfolio_cursor += 1
+            return portfolio
+
+    def get_window_factors_tensor(self, portfolio: List[str]) -> torch.Tensor:
+        """
+        获取训练窗口的因子  
+        根据portfolio，获取m期因子的二维tensor，若不足m期则返回空tensor  
+        """
+        m = self.m   
+        
+        factors_in_each_month = []  
+        for code in portfolio:
+            for month in range(m):
+                factors = self.get_train_data(code, month)
+                factors_in_each_month.append(factors)
+        return torch.tensor(factors_in_each_month, dtype=torch.float32)
+
+
     
         
 
