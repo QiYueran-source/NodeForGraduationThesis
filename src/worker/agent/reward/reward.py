@@ -42,8 +42,8 @@ class RewardManager:
         # 锁 
         
         # 记录  
-        self._return_record = {} # 字典：key为(year,month,portfolio)，value为((weights), rtr) 
-        self._reward_record = {} # 字典：key为(year,month,portfolio)，value为奖励   
+        self._performance_record = {} # 组合表现字典：key为(year,month,portfolio)，value为{weights:权重，rtr:回报率，vol:波动率，sharpe:夏普比率，max_drawdown:最大回撤}
+        self._reward_record = {} # 组合奖励字典：key为(year,month,portfolio)，value为奖励   
 
         # 验证
         self._validate_reward_weights()  
@@ -72,7 +72,7 @@ class RewardManager:
         if len(return_tuple) != len(weights):
             logger.error(f"收益率tuple和权重tuple长度不一致: {len(return_tuple)} != {len(weights)}")
             raise 
-        return sum(weights * rtr for rtr, weight in zip(return_tuple, weights))
+        return sum(weight * rtr for rtr, weight in zip(return_tuple, weights))
 
     def _calculate_vol(self, return_series: List[float]) -> float:
         """计算波动率
@@ -80,24 +80,56 @@ class RewardManager:
         - return_series: 收益率序列  
         输出：波动率  
         """
-        if len(return_series) == 1:
-            logger.warning(f"收益率序列长度为1，无法计算波动率")
+        if len(return_series) <= 1:
+            logger.warning(f"收益率序列长度小于等于1，无法计算波动率")
             return 0.0
         if len(return_series) < self._performance_config.get('vol_window', 24):
             logger.warning(f"收益率序列长度小于波动率窗口期数: {len(return_series)} < {self._performance_config.get('vol_window', 24)}")
         return np.std(return_series)
     
+    def _calculate_sharpe_ratio(self, return_series: List[float], risk_free_rate: float) -> float:
+        """计算夏普比率
+        输入：
+        - return_series: 收益率序列
+        - risk_free_rate: 无风险利率
+        输出：夏普比率
+        """
+        if len(return_series) <= 1:
+            logger.warning(f"收益率序列长度小于等于1，无法计算夏普比率")
+            return 0.0
+        if len(return_series) < self._performance_config.get('vol_window', 24):  
+            logger.warning(f"计算夏普时，收益率序列长度小于波动率窗口期数: {len(return_series)} < {self._performance_config.get('vol_window', 24)}")
+        return (np.mean(return_series) - risk_free_rate) / (np.std(return_series) + 1e-6) # 避免除0   
+    
     def _calculate_max_drawdown(self, return_series: List[float]) -> float:
         """计算最大回撤
-        输入： 
-        - return_series: 收益率序列  
-        输出：最大回撤  
+        输入：
+        - return_series: 收益率序列（索引小表示过去的收益）
+        输出：最大回撤（非负，0 表示无回撤；仅一期时返回 0）
         """
-        pass  
+        if len(return_series) <= 1:
+            logger.warning(f"收益率序列长度为1，无法计算最大回撤，返回0")  
+            return 0.0
+        if len(return_series) < self._performance_config.get('max_drawdown_window', 24):
+            logger.warning(f"收益率序列长度小于最大回撤窗口期数: {len(return_series)} < {self._performance_config.get('max_drawdown_window', 24)}")
+
+        # 累计净值：wealth[0] = 1 * (1 + r_0), wealth[i] = wealth[i-1] * (1 + r_i)
+        wealth = 1.0
+        peak = 1.0
+        max_dd = 0.0
+        for r in return_series:
+            wealth *= 1.0 + r
+            if wealth > peak:
+                peak = wealth
+            if peak > 0:
+                dd = (peak - wealth) / peak
+                if dd > max_dd:
+                    max_dd = dd
+        return max_dd  
     
     # =============== 奖励接口 ===============  
-    def put_reward(self, year:int, month:int, portfolio: Tuple[str], weights: Optional[Tuple[float]] = None):
-        """保存奖励  
+    def calc_performance(self, year:int, month:int, portfolio: Tuple[str], weights: Optional[Tuple[float]] = None):
+        """计算并保存表现  
         输入：
         - year: 年份
         - month: 月份
@@ -107,28 +139,39 @@ class RewardManager:
 
         计算方法：  
         1. 查询window期收益记录，如果存在，获取，否则计算、写入、获取  
-        2. 根据收益记录列表，计算奖励，保存在奖励记录  
         """
+        # 初始化
         key = (year, month, portfolio)  
+        perf_dict = {}
 
-        # 先查询收益记录，如果存在，获取，否则计算、写入、获取  
-        if key in self._return_record:
-            weights, rtr = self._return_record[key]
-        else:
-            if weights is None:
-                logger.error(f"{key}权重为空，无法计算回报，进而无法计算奖励")  
-                raise 
-            rtr_tuple = AGENT_DATA_ADAPTER.win_get_rtr(portfolio)
-            rtr = self._calculate_weighted_return(rtr_tuple, weights)
-            self._return_record[key] = (weights, rtr_tuple)
+        # 保存权重
+        perf_dict['weights'] = weights
+        
+        # 计算并保存收益
+        return_tuple = AGENT_DATA_ADAPTER.win_get_rtr(portfolio)
+        if len(return_tuple) != len(weights):
+            logger.error(f"收益率tuple和权重tuple长度不一致: {len(return_tuple)} != {len(weights)}")
+            raise 
+        perf_dict['rtr'] = self._calculate_weighted_return(return_tuple, weights)
+        
+        # 获取波动率计算需要的收益率序列
+        portfolio_return_series_for_vol = []
+        for i in range(self._performance_config.get('vol_window', 24)):
+            y,m = AGENT_DATA_ADAPTER._roll_year_month((year, month), -i)
+            rtr = self._performance_record.get((y,m,portfolio), {}).get('rtr', None)
+            if rtr is not None:
+                portfolio_return_series_for_vol.append(rtr)
+            else:
+                logger.warning(f"获取收益率序列失败: {y}, {m}, {portfolio}")
 
-        # 根据收益记录，计算奖励，保存在奖励记录  
-        reward = self._calculate_reward(rtr)
-        self._reward_record[key] = reward
+        portfolio_return_series_for_vol = portfolio_return_series_for_vol[::-1]
+        
 
-            
 
-        # 根据收益记录列表，计算奖励，保存在奖励记录  
+        
+
+
+        
 
 
    
