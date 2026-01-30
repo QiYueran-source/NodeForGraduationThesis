@@ -19,8 +19,7 @@ meta：由主机提供
     - mask: 因子掩码，1表示看，0表示不看    
     - performance_config: # 表现计算配置  
         - risk_free_rate: 无风险利率   
-        - vol_window: 波动率窗口期数  
-        - max_drawdown_window: 最大回撤窗口期数    
+        - rolling_window: 滚动窗口期数  
     - reward_config: 奖励配置   
         - reward_weights: 奖励权重
             - rtr: 收益率权重   
@@ -280,8 +279,7 @@ class DataCachePool:
         """获取表现计算配置
         - performance_config: # 表现计算配置  
             - risk_free_rate: 无风险利率   
-            - vol_window: 波动率窗口期数  
-            - max_drawdown_window: 最大回撤窗口期数 
+            - rolling_window: 滚动窗口期数  
         """
         with self._meta_lock:
             return self._meta.get('performance_config')
@@ -290,8 +288,7 @@ class DataCachePool:
         """设置奖励配置
         - performance_config: # 表现计算配置  
             - risk_free_rate: 无风险利率   
-            - vol_window: 波动率窗口期数  
-            - max_drawdown_window: 最大回撤窗口期数 
+            - rolling_window: 滚动窗口期数  
         """
         with self._meta_lock:
             self._meta['reward_config'] = config
