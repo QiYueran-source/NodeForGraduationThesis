@@ -17,6 +17,16 @@ meta：由主机提供
     - max_portfolios_num: 对于总共n个证券，最多可以构建C(N,n)个组合,太大，所以设置最大组合数量    
     - m: 回看的期数      
     - mask: 因子掩码，1表示看，0表示不看    
+    - performance_config: # 表现计算配置  
+        - risk_free_rate: 无风险利率   
+        - vol_window: 波动率窗口期数  
+        - max_drawdown_window: 最大回撤窗口期数    
+    - reward_config: 奖励配置   
+        - reward_weights: 奖励权重
+            - rtr: 收益率权重   
+            - vol: 波动权重   
+            - sharpe: 夏普比率权重   
+            - max_drawdown: 最大回测权重    
 
 record: 由节点维护  
 - running: 是否正在运行    
@@ -86,6 +96,7 @@ class DataCachePool:
         
         logger.info("数据缓存池已创建")
     
+    # ========== 训练数据接口 ==========
     def put_train(self, code: str, year: int, month: int, data: Any):
         """
         将数据放入缓存池
@@ -259,6 +270,43 @@ class DataCachePool:
         """设置最早的年份和月份"""
         with self._meta_lock:
             self._meta['earliest_year_month'] = (year, month)
+
+    def put_performance_config(self, config: Dict):
+        """设置表现计算配置"""
+        with self._meta_lock:
+            self._meta['performance_config'] = config
+    
+    def get_performance_config(self) -> Optional[Dict]:
+        """获取表现计算配置
+        - performance_config: # 表现计算配置  
+            - risk_free_rate: 无风险利率   
+            - vol_window: 波动率窗口期数  
+            - max_drawdown_window: 最大回撤窗口期数 
+        """
+        with self._meta_lock:
+            return self._meta.get('performance_config')
+    
+    def put_reward_config(self, config: Dict):
+        """设置奖励配置
+        - performance_config: # 表现计算配置  
+            - risk_free_rate: 无风险利率   
+            - vol_window: 波动率窗口期数  
+            - max_drawdown_window: 最大回撤窗口期数 
+        """
+        with self._meta_lock:
+            self._meta['reward_config'] = config
+    
+    def get_reward_config(self) -> Optional[Dict]:
+        """获取奖励配置
+        - reward_config: 奖励配置   
+            - reward_weights: 奖励权重
+                - rtr: 收益率权重   
+                - vol: 波动权重   
+                - sharpe: 夏普比率权重   
+                - max_drawdown: 最大回测权重    
+        """
+        with self._meta_lock:
+            return self._meta.get('reward_config')
 
     # =========== 记录数据接口 ============
     def get_record(self) -> Dict:

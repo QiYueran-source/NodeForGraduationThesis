@@ -1,5 +1,6 @@
 # 库
-from typing import List, Optional, Dict, Tuple
+import json
+from typing import List, Optional, Dict, Tuple, Any
 
 # 自定义组件 
 from src.worker.data.redis import REDIS_CONNECTOR,REDIS_PREFIX_MANAGER
@@ -14,11 +15,23 @@ class DataLoader:
         self.client = REDIS_CONNECTOR.get_client()
         self.redis_prefix_manager = REDIS_PREFIX_MANAGER
 
+    def _parse_json(self, raw: Any) -> Optional[Any]:
+        """将 Redis 返回的原始值（bytes/str）解析为 Python 对象，失败返回 None 并打日志。"""
+        if raw is None:
+            return None
+        try:
+            if isinstance(raw, bytes):
+                raw = raw.decode('utf-8')
+            return json.loads(raw)
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            logger.warning("JSON 解析失败: %s", e)
+            return None
+
     def fetch_data(self, 
         year: int, 
         month: Optional[int] = None, 
         code_list: Optional[List[str]] = None 
-    ) -> Dict[Tuple[int, str], any]:
+    ) -> Dict[Tuple[int, str], Any]:
         """
         从redis中获取数据
         :param year: 年份
@@ -64,12 +77,15 @@ class DataLoader:
                 # 执行批量获取
                 responses = pipe.execute()
 
-            # 第三步：处理响应并批量增加计数器
+            # 第三步：处理响应（解析 JSON）并批量增加计数器
             counters_to_incr = []
             for i, response in enumerate(responses):
                 if response is not None:  # 数据存在
+                    parsed = self._parse_json(response)
+                    if parsed is None:
+                        continue
                     month, code = key_mapping[i]
-                    result[(month, code)] = response
+                    result[(month, code)] = parsed
 
                     # 收集需要增加的计数器键
                     counter_key = self.redis_prefix_manager.build_counter_key(year, month, code)
@@ -131,7 +147,7 @@ class DataLoader:
         logger.debug("_get_all_codes 合计: year=%d, 代码数=%d", year, len(out))
         return out
 
-    def _fetch_data_fallback(self, year: int, months: List[int], codes: List[str]) -> Dict[Tuple[int, str], any]:
+    def _fetch_data_fallback(self, year: int, months: List[int], codes: List[str]) -> Dict[Tuple[int, str], Any]:
         """
         回退方法：逐个加载数据（当批量操作失败时使用）
         :param year: 年份
@@ -147,13 +163,13 @@ class DataLoader:
                     slice_key = self.redis_prefix_manager.build_train_slice_key(year, m, code)
                     counter_key = self.redis_prefix_manager.build_counter_key(year, m, code)
 
-                    # 获取数据
+                    # 获取数据并解析 JSON
                     data = self.client.get(slice_key)
-
-                    # 如果数据存在，则存储并原子自增计数器
                     if data is not None:
-                        result[(m, code)] = data
-                        self.client.incr(counter_key)
+                        parsed = self._parse_json(data)
+                        if parsed is not None:
+                            result[(m, code)] = parsed
+                            self.client.incr(counter_key)
                 except Exception as e:
                     logger.warning("加载数据失败(回退模式) year=%d, month=%d, code=%s: %s", year, m, code, e)
                     continue

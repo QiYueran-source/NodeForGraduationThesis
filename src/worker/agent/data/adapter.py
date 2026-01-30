@@ -9,25 +9,22 @@ import datetime as dt
 import threading
 import yaml  
 import random 
-from typing import Tuple, List, Optional
+from typing import Any, Tuple, List, Optional
 
 # 组件 
 from src.worker.cache import DATA_CACHE_POOL
 
 # 日志 
 from src.utils.logger import get_module_logger
-logger = get_module_logger(__name__, prefix='AgentDataAdapter')
+logger = get_module_logger(__name__, prefix='[AgentDataAdapter]')
 
 class AgentDataAdapter:
     def __init__(self):
-        # 训练配置   
-        self.n = DATA_CACHE_POOL.get_train_config().get('n',1) #一次决策的证券数量  
-        self.N = DATA_CACHE_POOL.get_N() #总股票数量  
-        self.m = DATA_CACHE_POOL.get_train_config().get('m',1) #回看的期数    
-        self.mask = DATA_CACHE_POOL.get_train_config().get('mask',[1]*len(DATA_CACHE_POOL.get_factors_list())) #因子掩码，1表示看，0表示不看    
-        self.max_portfolios_num = DATA_CACHE_POOL.get_train_config().get('max_portfolios_num',1000000) #对于总共n个证券，最多可以构建C(N,n)个组合,太大，所以设置最大组合数量 
-        self.start_year = DATA_CACHE_POOL.get_start_year() #开始年份
-        self.earliest_year_month = DATA_CACHE_POOL.get_earliest_year_month() #最早的年份和月份    
+        # 训练配置（使用时从 train_config 读取，不在此展开）
+        self.train_config = DATA_CACHE_POOL.get_train_config() or {}
+        self.N = DATA_CACHE_POOL.get_N()  # 总股票数量
+        self.start_year = DATA_CACHE_POOL.get_start_year()  # 开始年份
+        self.earliest_year_month = DATA_CACHE_POOL.get_earliest_year_month()  # 最早的年份和月份
 
         # 配置 
         self._config = {}    
@@ -71,10 +68,12 @@ class AgentDataAdapter:
         """
         采样若干个组合
         """
-        num = max(self.max_portfolios_num, math.comb(self.N, self.n))
-        rst_set = set() # 去重 
+        n = self.train_config.get('n', 1)
+        max_portfolios_num = self.train_config.get('max_portfolios_num', 1000000)
+        num = min(max_portfolios_num, math.comb(self.N, n))
+        rst_set = set()  # 去重
         while len(rst_set) < num:
-            rst_set.add(tuple(random.sample(self._portfolio_pool, self.n)))
+            rst_set.add(tuple(random.sample(self._portfolio_pool, n)))
         self._portfolio_pool = list(rst_set)
         logger.debug(f"采样{num}个组合完成")
 
@@ -107,14 +106,15 @@ class AgentDataAdapter:
         """
         初始化当前窗口  
         """
-        default_start_year_month = (self.start_year, 1)  
-        earliest_available_year_month = self._roll_year_month(self.earliest_year_month, self.m - 1)
+        default_start_year_month = (self.start_year, 1)
+        m = self.train_config.get('m', 1)
+        earliest_available_year_month = self._roll_year_month(self.earliest_year_month, m - 1)
         if AgentDataAdapter._year_month_greater(earliest_available_year_month, default_start_year_month):
             self._current_year_month = earliest_available_year_month
+            DATA_CACHE_POOL.put_current_year_month(self._current_year_month[0], self._current_year_month[1])
         else:
             self._current_year_month = default_start_year_month
-        
-        
+            DATA_CACHE_POOL.put_current_year_month(self._current_year_month[0], self._current_year_month[1])
         
     # ========== 训练数据接口 ==========
     def contains_train_data(self, year: int, month: int, code: str) -> bool:
@@ -228,13 +228,19 @@ class AgentDataAdapter:
             return self._portfolio_pool
 
     # ========== 训练窗口接口 ========== 
-    def roll(self):
+    def win_roll(self):
         """
         滚动训练窗口
         """
         pass 
 
-    def get_window_portfolio(self) -> List[str]:
+    def win_get_current_year_month(self) -> Tuple[int, int]:
+        """
+        获取训练窗口的当前年月  
+        """
+        return self._current_year_month
+
+    def win_get_a_portfolio(self) -> Tuple[str]:
         """
         获取训练窗口的组合  
         加锁，获取第cursor个组合，cursor+=1  
@@ -243,12 +249,13 @@ class AgentDataAdapter:
         with self._portfolio_pool_lock:
             cursor = self._portfolio_cursor
             if cursor >= len(self._portfolio_pool):
-                return []
+                return ()
             portfolio = self._portfolio_pool[cursor]
             self._portfolio_cursor += 1
-            return portfolio
+            logger.debug(f"获取{self.win_get_current_year_month()}训练窗口的组合: {portfolio}, cursor: {cursor}")
+            return tuple(portfolio)
 
-    def get_window_factors_tensor(self, portfolio: List[str]) -> torch.Tensor:
+    def win_get_factors_tensor(self, portfolio: Tuple[str]) -> torch.Tensor:
         """
         获取训练窗口的因子   
         即current_year_month 到 current_year_month - m + 1 的因子的三维tensor  
@@ -257,7 +264,7 @@ class AgentDataAdapter:
         factors_tensor = []
         for code in portfolio:
             code_factors = []
-            for i in range(self.m):
+            for i in range(self.train_config.get('m', 1)):
                 year, month = self._roll_year_month(self._current_year_month, -i)
                 result = self.get_train_data(year, month, code)
                 if result is None:
@@ -265,9 +272,24 @@ class AgentDataAdapter:
                 factors, rtr = result
                 code_factors.append(factors)
             factors_tensor.append(code_factors)
+        logger.debug(f"获取{self.win_get_current_year_month()}训练窗口的因子,形状: {factors_tensor.shape}")
         return torch.tensor(factors_tensor, dtype=torch.float32)
         
-
+    def win_get_rtr(self, portfolio: List[str]) -> Tuple[float]:  
+        """
+        获取一个n+1维的tuple，第i个元素为portfolio[i]的收益率，最后一个收益率为无风险利率 
+        """
+        rtr_tuple = []
+        for code in portfolio:
+            year, month = self.win_get_current_year_month()
+            result = self.get_train_data(year, month, code)
+            if result is None:
+                return ()
+            factors, rtr = result
+            rtr_tuple.append(rtr)
+        rtr_tuple.append(self.train_config.get('performance_config', {}).get('risk_free_rate', 0.02))
+        logger.debug(f"获取{self.win_get_current_year_month()}训练窗口的收益率,形状: {rtr_tuple.shape}")
+        return tuple(rtr_tuple)
         
 
         
