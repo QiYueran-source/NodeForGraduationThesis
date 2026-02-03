@@ -39,6 +39,7 @@ def handle_message(message_str: str,socket_client:socket):
             - max_portfolios_num: 对于总共n个证券，最多可以构建C(N,n)个组合,太大，所以设置最大组合数量    
             - m: 回看的期数      
             - mask_len: 因子掩码长度，默认60    
+            - model_config: 模型配置（cate: 0 表示 mlp1；config: 模型具体参数）
             - performance_config: # 表现计算配置  
                 - risk_free_rate: 无风险利率   
                 - rolling_window: 滚动窗口期数  
