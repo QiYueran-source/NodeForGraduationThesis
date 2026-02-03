@@ -18,6 +18,9 @@ from src.worker.cache.pool import DATA_CACHE_POOL # 缓存池
 from src.worker.data import data_thread # 数据线程
 from src.worker.save import SAVER # 保存器
 from src.worker.agent import AGENT_DATA_ADAPTER, REWARD_MANAGER # 数据适配器，奖励管理器 
+from src.worker.agent import MLP 
+from src.worker.agent import RollingEnv
+
 
 
 # 日志
@@ -37,7 +40,41 @@ def start_datathread():
     logger.debug("数据线程启动完成")  
 
 def train():
-    """训练循环"""
+    """最简单训练循环：RollingEnv + MLP，每步 loss=-reward*log_prob 做 policy gradient 式更新。"""
+    tc = DATA_CACHE_POOL.get_train_config() or {}
+    n = int(tc.get("n", 1))
+    m = int(tc.get("m", 1))
+    mask_len = int(tc.get("mask_len", 60))
+
+    env = RollingEnv()
+    model = MLP(n, m, mask_len)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+
+    obs, info = env.reset() # 数据加载器限制，一个task只能跑1轮  
+    episode_steps = 0
+    while DATA_CACHE_POOL.get_running():
+        obs_t = torch.from_numpy(obs).float().unsqueeze(0)  # (1, n, m, mask_len)
+        action_t = model(obs_t)  # (1, n+1)
+        log_prob = (torch.log(action_t.clamp(1e-8)) * action_t).sum(dim=-1).squeeze(0)
+        action_np = action_t.squeeze(0).detach().numpy()
+
+        next_obs, reward, terminated, truncated, info = env.step(action_np)
+        loss = -float(reward) * log_prob
+        if loss.requires_grad:
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+        episode_steps += 1
+        obs = next_obs
+        if terminated or truncated:
+            logger.debug("episode 结束 steps=%s reward=%s", episode_steps, reward)
+            break
+        if not DATA_CACHE_POOL.get_running():
+            logger.info("训练循环退出")
+            break
+    
+    
 
 def stop():
     # 保存
