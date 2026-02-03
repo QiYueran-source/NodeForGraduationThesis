@@ -24,7 +24,11 @@ class AgentDataAdapter:
         self.train_config = DATA_CACHE_POOL.get_train_config() or {}
         self.N = DATA_CACHE_POOL.get_N()  # 总股票数量
         self.start_year = DATA_CACHE_POOL.get_start_year()  # 开始年份
+        self.end_year = DATA_CACHE_POOL.get_end_year()  # 结束年份
+        self.end_month = DATA_CACHE_POOL.get_end_month()  # 结束月份
         self.earliest_year_month = DATA_CACHE_POOL.get_earliest_year_month()  # 最早的年份和月份
+        self.mask_len = self.train_config.get('mask_len', 60)  # 因子掩码长度
+        self.mask = []
 
         # 配置 
         self._config = {}    
@@ -52,6 +56,9 @@ class AgentDataAdapter:
         # 加载股票池
         self._sample_portfolios()
 
+        # 生成掩码
+        self._generate_mask()
+
         # 设置当前窗口
         self._set_current_year_month()
 
@@ -76,6 +83,22 @@ class AgentDataAdapter:
             rst_set.add(tuple(random.sample(self._portfolio_pool, n)))
         self._portfolio_pool = list(rst_set)
         logger.debug(f"采样{num}个组合完成")
+
+    def _generate_mask(self):
+        """
+        生成掩码  
+        """
+        factors_list = DATA_CACHE_POOL.get_factors_list() or []
+        n = len(factors_list)
+        effective_mask_len = min(self.mask_len, n)
+        seed = self.train_config.get('seed')
+        rng = random.Random(seed) if seed is not None else random.Random()
+        indices = list(range(n))
+        rng.shuffle(indices)
+        self.mask = [0] * n
+        for i in indices[:effective_mask_len]:
+            self.mask[i] = 1
+        return self.mask
 
     @staticmethod
     def _roll_year_month(ym: Tuple[int, int], rolling_m: int) -> Tuple[int, int]:
@@ -228,12 +251,24 @@ class AgentDataAdapter:
             return self._portfolio_pool
 
     # ========== 训练窗口接口 ========== 
-    def win_roll(self):
+    def win_roll(self)->bool:
         """
-        滚动训练窗口
+        如果current_year_month < end_year, end_month，则滚动训练窗口  
+            1._current_year_month += 1  
+            2.cusor = 0
+            3.DATA_CACHE_POOL.put_current_year_month(self._current_year_month[0], self._current_year_month[1])
+        否则，返回False
         """
-        pass 
-
+        if AgentDataAdapter._year_month_greater((self.end_year,self.end_month), self._current_year_month):
+            self._current_year_month = self._roll_year_month(self._current_year_month, 1)
+            self._portfolio_cursor = 0
+            DATA_CACHE_POOL.put_current_year_month(self._current_year_month[0], self._current_year_month[1])
+            logger.info(f'滚动成功，当前ym:{self._current_year_month[0]}-{self._current_year_month[1]}')
+            return True
+        else:
+            logger.warning('已经达到结束年月，暂停滚动')
+            return False
+        
     def win_get_current_year_month(self) -> Tuple[int, int]:
         """
         获取训练窗口的当前年月  
@@ -260,6 +295,7 @@ class AgentDataAdapter:
         获取训练窗口的因子   
         即current_year_month 到 current_year_month - m + 1 的因子的三维tensor  
         根据portfolio，获取m期因子的三维tensor，若不足m期则返回空tensor  
+        按 self.mask 掩码：只取 mask[j]==1 对应位置的因子。  
         """
         factors_tensor = []
         for code in portfolio:
@@ -270,10 +306,12 @@ class AgentDataAdapter:
                 if result is None:
                     return torch.tensor([], dtype=torch.float32)
                 factors, rtr = result
-                code_factors.append(factors)
+                masked_factors = [factors[j] for j in range(len(factors)) if self.mask[j] == 1]
+                code_factors.append(masked_factors)
             factors_tensor.append(code_factors)
-        logger.debug(f"获取{self.win_get_current_year_month()}训练窗口的因子,形状: {factors_tensor.shape}")
-        return torch.tensor(factors_tensor, dtype=torch.float32)
+        t = torch.tensor(factors_tensor, dtype=torch.float32)
+        logger.debug(f"获取{self.win_get_current_year_month()}训练窗口的因子,形状: {t.shape}")
+        return t
         
     def win_get_rtr(self, portfolio: List[str]) -> Tuple[float]:  
         """

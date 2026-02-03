@@ -8,15 +8,18 @@ train: 由主机提供
 meta：由主机提供   
 - task_id: 任务id    
 - start_year: 开始年份  
+- end_year: 结束年份  
+- end_month: 结束月份  
 - N: 总股票数量    
 - stock_list: 股票列表   
 - factors_list: 因子列表（避免麻烦，直接保存本地）   
 - earliest_year_month: 最早的年份和月份,(year, month)  
 - train_config: 训练配置   
+    - seed: 随机种子  
     - n: 一个组合中的证券数量（算上现金，共n+1个证券）  
     - max_portfolios_num: 对于总共n个证券，最多可以构建C(N,n)个组合,太大，所以设置最大组合数量    
     - m: 回看的期数      
-    - mask: 因子掩码，1表示看，0表示不看    
+    - mask_len: 因子掩码长度，默认60    
     - performance_config: # 表现计算配置  
         - risk_free_rate: 无风险利率   
         - rolling_window: 滚动窗口期数  
@@ -30,6 +33,7 @@ meta：由主机提供
 record: 由节点维护  
 - running: 是否正在运行    
 - current_year_month: 当前窗口(year,month)   
+- pid: 进程号  
  
 """
 
@@ -77,10 +81,11 @@ class DataCachePool:
                                 'tang', 'taxchg', 'turn', 'vol', 'volumed'
                             ],
             'train_config': {
+                'seed': None,
                 'n': None,
                 'max_portfolios_num': None,
                 'm': None,
-                'mask': None
+                'mask_len': None
             },
         }
 
@@ -307,6 +312,26 @@ class DataCachePool:
         with self._meta_lock:
             return self._meta.get('reward_config')
 
+    def get_end_year(self) -> Optional[int]:
+        """获取结束年月"""
+        with self._meta_lock:
+            return self._meta.get('end_year')
+    
+    def put_end_year(self, year: int):
+        """设置结束年月"""
+        with self._meta_lock:
+            self._meta['end_year'] = year
+
+    def get_end_month(self) -> Optional[int]:
+        """获取结束月份"""
+        with self._meta_lock:
+            return self._meta.get('end_month')
+    
+    def put_end_month(self, month: int):
+        """设置结束月份"""
+        with self._meta_lock:
+            self._meta['end_month'] = month
+
     def get_meta(self) -> Dict:
         """获取元数据"""
         with self._meta_lock:
@@ -342,6 +367,15 @@ class DataCachePool:
         """设置运行状态"""
         with self._record_lock:
             self._record['running'] = running
+
+    def get_pid(self) -> Optional[int]:
+        """获取进程号"""
+        with self._record_lock:
+            return self._record.get('pid')
     
+    def put_pid(self, pid: int):
+        """设置进程号"""
+        with self._record_lock:
+            self._record['pid'] = pid
 # 全局实例  
 DATA_CACHE_POOL = DataCachePool() 

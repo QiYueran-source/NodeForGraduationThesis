@@ -11,4 +11,4 @@ def set_path():
     # 添加src目录到Python路径
     sys.path.append(os.path.join(PROJECT_ROOT, 'src'))
 
-set_path()
+set_path() # 设置路径
