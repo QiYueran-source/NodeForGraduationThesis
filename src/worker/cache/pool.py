@@ -52,7 +52,7 @@ class DataCachePool:
         """
         self._cache: Dict[Tuple[str, int, int], Any] = {} # 缓存数据：键为 (code, year, month)，值为数据
         
-        # 结构化meta数据
+        # 结构化meta数据（由主机提供）
         self._meta: Dict[str, Any] = {
             'task_id': None,
             'start_year': None,
@@ -82,16 +82,18 @@ class DataCachePool:
                 'm': None,
                 'mask': None
             },
-            'record': {
-                'running': False,
-                'current_year_month': None
-            }
-        } 
-        
+        }
+
+        # 记录数据（由节点维护），单独字典
+        self._record: Dict[str, Any] = {
+            'running': False,
+            'current_year_month': None,
+        }
         
         # 线程锁，保护缓存操作
         self._lock = threading.Lock()
         self._meta_lock = threading.Lock()
+        self._record_lock = threading.Lock()
         
         logger.info("数据缓存池已创建")
     
@@ -305,40 +307,36 @@ class DataCachePool:
         with self._meta_lock:
             return self._meta.get('reward_config')
 
-    # =========== 记录数据接口 ============
+    # =========== 记录数据接口（_record 独立字典） ============
     def get_record(self) -> Dict:
         """获取运行记录"""
-        with self._meta_lock:
-            record = self._meta.get('record', {})
-            if not isinstance(record, dict):
-                self._meta['record'] = {'running': False, 'current_year_month': None}
-                return self._meta['record']
-            return record
+        with self._record_lock:
+            return dict(self._record)
     
     def put_record(self, key: str, value: Any):
         """设置运行记录中的某个字段"""
-        with self._meta_lock:
-            if 'record' not in self._meta or not isinstance(self._meta['record'], dict):
-                self._meta['record'] = {'running': False, 'current_year_month': None}
-            self._meta['record'][key] = value
+        with self._record_lock:
+            self._record[key] = value
     
     def get_current_year_month(self) -> Optional[Tuple[int, int]]:
         """获取当前窗口 (year, month)"""
-        record = self.get_record()
-        return record.get('current_year_month') if isinstance(record, dict) else None
+        with self._record_lock:
+            return self._record.get('current_year_month')
     
     def put_current_year_month(self, year: int, month: int):
         """设置当前窗口 (year, month)"""
-        self.put_record('current_year_month', (year, month))
+        with self._record_lock:
+            self._record['current_year_month'] = (year, month)
     
     def get_running(self) -> bool:
         """获取运行状态"""
-        record = self.get_record()
-        return record.get('running', False) if isinstance(record, dict) else False
+        with self._record_lock:
+            return self._record.get('running', False)
     
     def put_running(self, running: bool):
         """设置运行状态"""
-        self.put_record('running', running)
+        with self._record_lock:
+            self._record['running'] = running
     
 # 全局实例  
 DATA_CACHE_POOL = DataCachePool() 

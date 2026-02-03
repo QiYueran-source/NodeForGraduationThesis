@@ -288,7 +288,7 @@ class AgentDataAdapter:
             factors, rtr = result
             rtr_tuple.append(rtr)
         rtr_tuple.append(self.train_config.get('performance_config', {}).get('risk_free_rate', 0.02))
-        logger.debug(f"获取{self.win_get_current_year_month()}训练窗口的收益率,形状: {rtr_tuple.shape}")
+        logger.debug(f"获取{self.win_get_current_year_month()}训练窗口的收益率,长度: {len(rtr_tuple)}")
         return tuple(rtr_tuple)
         
 

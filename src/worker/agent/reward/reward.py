@@ -29,6 +29,7 @@ from src.worker.agent.data.adapter import AGENT_DATA_ADAPTER
 from src.utils.logger import get_module_logger
 logger = get_module_logger(__name__, prefix='[RewardCalculator]')
 
+
 class RewardManager:
     def __init__(self):
         # 配置  
@@ -45,8 +46,10 @@ class RewardManager:
         self._record_lock = threading.Lock()
         
         # 记录  
-        self._performance_record = {} # 组合表现字典：key为(year,month,portfolio)，value为{weights:权重，rtr:回报率，vol:波动率，sharpe:夏普比率，max_drawdown:最大回撤}
-        self._reward_record = {} # 组合奖励字典：key为(year,month,portfolio)，value为奖励   
+        self._record = {} # 组合表现字典：key为(year,month,portfolio)，value为 decision_weights:组合权重(agent决策), performance:[回报率，波动率，夏普比率，最大回撤],normalized_performance:[归一化回报率，归一化波动率，归一化夏普比率，归一化最大回撤], reward:奖励   
+
+        # 快照进度 
+        self._snapshot_progress = (-1, -1) # 保证第一次快照不为空
 
         # 验证
         self._validate_reward_weights()  
@@ -65,17 +68,17 @@ class RewardManager:
         logger.warning(f"奖励权重和为0，简单归一化:{original_weights} -> {self._reward_weights}")
 
     # =============== 计算奖励方法 ===============
-    def _calculate_weighted_return(self, return_tuple: Tuple[float], weights: Tuple[float]) -> float:
+    def _calculate_weighted_return(self, return_tuple: Tuple[float], decision_weights: Tuple[float]) -> float:
         """计算加权回报率
         输入： 
         - return_tuple: 收益率tuple，最后一个元素为无风险利率    
-        - weights: 证券权重tuple，最后一项为现金    
+        - decision_weights: 证券权重tuple（agent决策输出），最后一项为现金    
         输出：加权回报率  
         """
-        if len(return_tuple) != len(weights):
-            logger.error(f"收益率tuple和权重tuple长度不一致: {len(return_tuple)} != {len(weights)}")
+        if len(return_tuple) != len(decision_weights):
+            logger.error(f"收益率tuple和decision_weights长度不一致: {len(return_tuple)} != {len(decision_weights)}")
             raise 
-        return sum(weight * rtr for rtr, weight in zip(return_tuple, weights))
+        return sum(w * rtr for rtr, w in zip(return_tuple, decision_weights))
 
     def _calculate_vol(self, return_series: List[float]) -> float:
         """计算波动率
@@ -149,67 +152,69 @@ class RewardManager:
                     max_dd = dd
         return max_dd
 
-    # =============== 奖励接口 ===============  
-    def calc_portfolio_performance(self, year:int, month:int, portfolio: Tuple[str], weights: Tuple[float]):
+    # =============== 表现接口 ===============  
+    def calc_portfolio_performance(self, year:int, month:int, portfolio: Tuple[str], decision_weights: Tuple[float]):
         """计算并保存表现  
         输入：
         - year: 年份
         - month: 月份
         - portfolio: 组合  
-        - weights: 权重  
-        将表现保存在记录中，key为(year,month,portfolio)，value为{weights:权重，rtr:回报率，vol:波动率，sharpe:夏普比率，max_drawdown:最大回撤}   
+        - decision_weights: 组合权重（agent决策输出）  
+        将表现保存在记录中，key为(year,month,portfolio)，value为{decision_weights:组合权重，rtr:回报率，vol:波动率，sharpe:夏普比率，max_drawdown:最大回撤}   
 
         计算方法：  
         1. 查询window期收益记录，如果存在，获取，否则计算、写入、获取  
         """
         # 初始化
         key = (year, month, portfolio)  
-        perf_dict = {}
+        record = {}
 
-        # 保存权重
-        perf_dict['weights'] = weights
+        # 保存组合权重（agent决策）
+        record['decision_weights'] = decision_weights
         
+        # 计算并保存表现
+        performance = []
+
         # 计算并保存收益
         return_tuple = AGENT_DATA_ADAPTER.win_get_rtr(portfolio)
-        if len(return_tuple) != len(weights):
-            logger.error(f"收益率tuple和权重tuple长度不一致: {len(return_tuple)} != {len(weights)}")
+        if len(return_tuple) != len(decision_weights):
+            logger.error(f"收益率tuple和decision_weights长度不一致: {len(return_tuple)} != {len(decision_weights)}")
             raise 
-        perf_dict['rtr'] = self._calculate_weighted_return(return_tuple, weights)
+        rtr = self._calculate_weighted_return(return_tuple, decision_weights)
+        performance.append(rtr)
         
-        # 获取滚动窗口期收益率序列
-        portfolio_return_series_for_rolling = []
-        for i in range(self._performance_config.get('rolling_window', 24)):
-            y,m = AGENT_DATA_ADAPTER._roll_year_month((year, month), -i)
-            rtr = self._performance_record.get((y,m,portfolio), {}).get('rtr', None)
+        # 获取滚动窗口期收益率序列（从当前期rtr开始，往前rolling_window期）
+        portfolio_return_series_for_rolling = [rtr]
+        for i in range(1,self._performance_config.get('rolling_window', 24)):
+            y, m = AGENT_DATA_ADAPTER._roll_year_month((year, month), -i)
+            past = self._record.get((y, m, portfolio), {})
+            perf = past.get('performance')
+            rtr = perf[0] if perf and len(perf) >= 1 else None
             if rtr is not None:
                 portfolio_return_series_for_rolling.append(rtr)
             else:
                 logger.warning(f"获取收益率序列失败: {y}, {m}, {portfolio}")
 
-        portfolio_return_series_for_rolling = portfolio_return_series_for_rolling[::-1]
+        portfolio_return_series_for_rolling = portfolio_return_series_for_rolling[::-1] # 反转，idx从最早的ym开始  
 
         # 计算波动率 
-        perf_dict['vol'] = self._calculate_vol(portfolio_return_series_for_rolling)  
+        performance.append(self._calculate_vol(portfolio_return_series_for_rolling))  
 
         # 计算夏普比率 
-        perf_dict['sharpe'] = self._calculate_sharpe_ratio(portfolio_return_series_for_rolling)  
+        performance.append(self._calculate_sharpe_ratio(portfolio_return_series_for_rolling))  
 
         # 计算最大回撤 
-        perf_dict['max_drawdown'] = self._calculate_max_drawdown(portfolio_return_series_for_rolling)  
+        performance.append(self._calculate_max_drawdown(portfolio_return_series_for_rolling))  
 
-        # 保存
+        # 保存表现
+        record['performance'] = performance
+
+        # 保存记录
         with self._record_lock:
-            self._performance_record[key] = perf_dict  
+            self._record[key] = record
+            logger.debug(f"保存记录: {key}, {record}")
  
-
-    def calc_all_performance(
-        self,
-        year: int,
-        month: int,
-        portfolios: List[Tuple[str]],
-        weights: List[Tuple[float]],
-        max_workers: Optional[int] = None,
-    ) -> None:
+    def calc_all_performance(self, year:int, month:int, portfolios:List[Tuple[str]], decision_weights:List[Tuple[float]], max_workers:Optional[int] = None):
         """
         批量计算当前窗口下所有组合的表现（多线程并行）。
 
@@ -217,21 +222,157 @@ class RewardManager:
         - year: 年份
         - month: 月份
         - portfolios: 组合列表，每个元素为 (code1, code2, ...)
-        - weights: 权重列表，与 portfolios 一一对应，每个元素为 (w1, w2, ..., w_cash)
+        - decision_weights: 组合权重列表（agent决策），与 portfolios 一一对应，每个元素为 (w1, w2, ..., w_cash)
         - max_workers: 并行线程数，None 表示使用默认（min(32, num_portfolios+4)）
 
-        将每个组合的表现写入 self._performance_record，不返回。
+        将每个组合的表现写入 self._record，不返回。
         """
-        if len(portfolios) != len(weights):
-            logger.error(f"组合列表和权重列表长度不一致: {len(portfolios)} != {len(weights)}")
-            raise ValueError(f"组合列表和权重列表长度不一致: {len(portfolios)} != {len(weights)}")
+        if len(portfolios) != len(decision_weights):
+            logger.error(f"组合列表和decision_weights列表长度不一致: {len(portfolios)} != {len(decision_weights)}")
+            raise ValueError(f"组合列表和decision_weights列表长度不一致: {len(portfolios)} != {len(decision_weights)}")
         n = len(portfolios)
         workers = max_workers if max_workers is not None else min(32, n + 4)
 
         def _task(i: int) -> None:
-            self.calc_portfolio_performance(year, month, portfolios[i], weights[i])
+            self.calc_portfolio_performance(year, month, portfolios[i], decision_weights[i])
 
         with ThreadPoolExecutor(max_workers=workers) as executor:
             list(executor.map(_task, range(n)))
 
-        
+    def normalize_portfolio_performance(self, year:int, month:int, portfolio: Tuple[str]) -> List[float]:
+        """归一化组合表现
+        输入：
+        - year: 年份
+        - month: 月份
+        - portfolio: 组合
+        输出：归一化表现
+        """
+        # 键
+        key = (year, month, portfolio)
+
+        # 获取需要归一化的组合记录
+        portfolio_performance_record = self._record.get(key, {}).get('performance', [])
+        if not portfolio_performance_record:
+            logger.warning(f"组合{portfolio}在{year}年{month}月没有记录，无法计算归一化表现")
+            return
+
+        # 获取该窗口的表现序列
+        performance_list = [[] for _ in range(4)] # 4个表现空序列
+        # 按 key 筛，再取 value
+        all_portfolio_record_in_year_month = [
+            self._record[k] for k in self._record
+            if k[0] == year and k[1] == month
+        ]
+
+        # 获取窗口表现序列 
+        for record in all_portfolio_record_in_year_month:
+            performance = record.get('performance')
+            if performance:
+                performance_list[0].append(performance[0])
+                performance_list[1].append(performance[1])
+                performance_list[2].append(performance[2])
+                performance_list[3].append(performance[3])
+
+        # 获取每一个表现的均值和标准差
+        if (
+            len(performance_list[0]) == 0 or len(performance_list[0]) == 1 or 
+            len(performance_list[1]) == 0 or len(performance_list[1]) == 1 or 
+            len(performance_list[2]) == 0 or len(performance_list[2]) == 1 or 
+            len(performance_list[3]) == 0 or len(performance_list[3]) == 1
+        ):
+            logger.warning(f"窗口表现序列长度小于2，无法计算均值和标准差，记录为0")
+            mean_list = [0.0, 0.0, 0.0, 0.0]
+            std_list = [1.0, 1.0, 1.0, 1.0]
+        else:
+            mean_list = [np.mean(performance_list[i]) for i in range(4)]
+            std_list = [np.std(performance_list[i]) for i in range(4)]
+
+        # 归一化组合表现
+        normalized_performance = [(portfolio_performance_record[i] - mean_list[i]) / (std_list[i] + 1e-6) for i in range(4)]
+
+        # 记录 
+        with self._record_lock:
+            self._record[key]['normalized_performance'] = normalized_performance
+
+    def normalized_all_performance(self, year:int, month:int, portfolios:List[Tuple[str]], max_workers:Optional[int] = None):
+        """批量计算当前窗口下所有组合的归一化表现（多线程并行）"""
+        n = len(portfolios)
+        workers = max_workers if max_workers is not None else min(32, n + 4)
+
+        def _task(i: int) -> None:
+            self.normalize_portfolio_performance(year, month, portfolios[i])
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            list(executor.map(_task, range(n)))
+
+    def calc_portfolio_reward(self, year:int, month:int, portfolio: Tuple[str]) -> float:
+        """计算组合奖励
+        输入：
+        - year: 年份
+        - month: 月份
+        - portfolio: 组合
+        输出：奖励
+        """
+        key = (year, month, portfolio)
+        portfolio_record = self._record.get(key, {})
+        if not portfolio_record:
+            logger.warning(f"组合{portfolio}在{year}年{month}月没有记录，无法计算奖励")
+            return 0.0
+
+        # 获取归一化表现
+        normalized_performance = portfolio_record.get('normalized_performance', [])
+        if not normalized_performance:
+            logger.warning(f"组合{portfolio}在{year}年{month}月没有归一化表现，无法计算奖励")
+            return 0.0
+
+        # 计算奖励（按固定顺序取权重，与 normalized_performance 一一对应）
+        if len(normalized_performance) != 4:
+            logger.warning("normalized_performance 长度非 4: %s", key)
+            return 0.0
+        weight_list = [self._reward_weights.get(k, 0.0) for k in ('rtr', 'vol', 'sharpe', 'max_drawdown')]
+        reward = sum(w * r for w, r in zip(normalized_performance, weight_list))
+
+        # 记录
+        with self._record_lock:
+            self._record[key]['reward'] = reward
+            logger.debug(f"保存奖励: {key}, {reward}")
+
+        return reward
+
+    def calc_all_reward(self, year:int, month:int, portfolios:List[Tuple[str]], max_workers:Optional[int] = None):
+        """批量计算当前窗口下所有组合的奖励（多线程并行）"""
+        n = len(portfolios)
+        workers = max_workers if max_workers is not None else min(32, n + 4)
+
+        def _task(i: int) -> None:
+            self.calc_portfolio_reward(year, month, portfolios[i])
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            list(executor.map(_task, range(n)))
+
+       
+    # =============== 保存接口 ===============  
+    def get_incremental_snapshot(self, year: int, month: int) -> Dict[Tuple[int, int, Tuple[str]], Dict]:
+        """获取增量快照
+        输入：
+        - year: 年份
+        - month: 月份
+        输出：增量记录 dict，key 为 (year, month, portfolio)，value 为 {decision_weights, performance: [rtr, vol, sharpe, max_drawdown], reward?}
+
+        增量为上一次 _snapshot_progress 到当前 (year, month) 的差集（不包含上次的 year_month）。
+        """
+        yp, mp = self._snapshot_progress
+
+        incremental_record_keys = [
+            k for k in self._record.keys()
+            if AGENT_DATA_ADAPTER._year_month_greater((k[0], k[1]), (yp, mp))
+            and not AGENT_DATA_ADAPTER._year_month_greater((k[0], k[1]), (year, month))
+        ]
+        incremental_record_dict = {k: self._record[k] for k in incremental_record_keys}
+
+        self._snapshot_progress = (year, month)
+        return incremental_record_dict
+
+
+
+REWARD_MANAGER = RewardManager()
