@@ -33,7 +33,13 @@ class Saver:
         """将表现 dict 转为 JSON 可序列化（tuple -> list）"""
         return {k: list(v) if isinstance(v, tuple) else v for k, v in data.items()}
 
-    def save_performance_and_reward_snapshot(self):
+    def save_meta(self):
+        """保存元数据到本地"""  
+        meta_path = self.base_path / "meta.json"
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(DATA_CACHE_POOL.get_meta(), f, ensure_ascii=False)
+
+    def append_performance_and_reward_snapshot(self):
         """保存表现和奖励快照到本地，按 JSONL 追加到 record.jsonl，每行一条 (year, month, portfolio) 完整记录。"""
         current_ym = DATA_CACHE_POOL.get_current_year_month()
         if not current_ym:
@@ -51,6 +57,14 @@ class Saver:
                     obj = {"year": y, "month": m, "portfolio": list(portfolio), "data": self._serialize_perf(data)}
                     f.write(json.dumps(obj, ensure_ascii=False) + "\n")
             logger.debug("追加记录快照: %s, 条数=%d", record_path, len(incremental_result))
+
+    def save_model(self):
+        """保存模型到本地"""
+        pass 
+
+    def save_status(self):
+        """保存状态到本地"""
+        pass  
 
 SAVER = Saver()
 

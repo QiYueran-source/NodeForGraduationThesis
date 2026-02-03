@@ -307,6 +307,11 @@ class DataCachePool:
         with self._meta_lock:
             return self._meta.get('reward_config')
 
+    def get_meta(self) -> Dict:
+        """获取元数据"""
+        with self._meta_lock:
+            return dict(self._meta)
+    
     # =========== 记录数据接口（_record 独立字典） ============
     def get_record(self) -> Dict:
         """获取运行记录"""

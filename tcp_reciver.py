@@ -9,8 +9,6 @@ import socket
 import sys
 import json
 
-# 自定义组件
-from src.task import Task,Status
 
 # 日志
 from src.utils.logger import get_module_logger
@@ -19,8 +17,7 @@ logger = get_module_logger(__name__,'TCPReciver')
 def handle_message(message_str: str,socket_client:socket):
     """
     处理收到的消息  
-    消息格式：json 
-    
+    消息格式：json {"req":1,"meta":{}}
     """
     # 解析JSON
     try:
@@ -51,8 +48,6 @@ def handle_message(message_str: str,socket_client:socket):
         response = "status"
         socket_client.sendall(response.encode('utf-8'))
         
-
-
 def main():
     # 创建TCP socket
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

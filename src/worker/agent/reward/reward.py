@@ -349,8 +349,7 @@ class RewardManager:
 
         with ThreadPoolExecutor(max_workers=workers) as executor:
             list(executor.map(_task, range(n)))
-
-       
+ 
     # =============== 保存接口 ===============  
     def get_incremental_snapshot(self, year: int, month: int) -> Dict[Tuple[int, int, Tuple[str]], Dict]:
         """获取增量快照
