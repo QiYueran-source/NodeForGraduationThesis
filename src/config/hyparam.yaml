@@ -12,6 +12,11 @@ data_thread:
   max_year: 3 # 每次获取，使得存在至少2年数据   
   check_interval: 1 # 检测间隔(s)  
 
+# record线程
+record_thread:
+  record_interval: 3 # 写入间隔(s)  
+
+
 # agent数据获取配置
 agent:
   data:

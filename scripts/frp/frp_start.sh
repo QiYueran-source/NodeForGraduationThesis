@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# 日志
+# 日志与状态文件
 LOG_FILE="/Node/logs/frpc.log"
+STATE_FILE="/Node/frp/frpc.state"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -31,17 +32,20 @@ if [ -z "$ALLOCATED_PORT" ] || [ "$ALLOCATED_PORT" = "null" ]; then
 fi
 log_info "获取可用端口: $ALLOCATED_PORT"
 
-# 导出到环境变量，供后续 Python 使用
-export ALLOCATED_PORT="$ALLOCATED_PORT"
-log_info "已导出环境变量 ALLOCATED_PORT"
+# 随机生成 nodeName（node_时间戳_随机数，保证唯一）
+NODE_NAME="node_$(date +%s)_${RANDOM}"
+log_info "生成 nodeName: $NODE_NAME"
 
-# 注入端口到配置文件
-if sed -i "s/remotePort = \$remotePort/remotePort = $ALLOCATED_PORT/" /Node/frp/frpc.toml; then
-    log_info "端口注入成功"
-else
+# 注入 nodeName 和端口到配置文件（支持模板 name = $nodeName 或已有值覆盖）
+if ! sed -i "s/^name = .*/name = \"$NODE_NAME\"/" /Node/frp/frpc.toml; then
+    log_error "nodeName 注入失败"
+    exit 1
+fi
+if ! sed -i "s/^remotePort = .*/remotePort = $ALLOCATED_PORT/" /Node/frp/frpc.toml; then
     log_error "端口注入失败"
     exit 1
 fi
+log_info "配置注入成功 (nodeName=$NODE_NAME, port=$ALLOCATED_PORT)"
 
 # 检查是否已经在运行（只检查我们配置的frp进程）
 FRP_PID=$(ps aux 2>/dev/null | grep -v grep | grep "frpc -c frp/frpc.toml" | awk '{print $2}' | head -1)
@@ -61,7 +65,12 @@ if ! ps -p $FRP_PID > /dev/null 2>&1; then
     exit 1
 fi
 
-log_info "frp进程启动成功 (PID: $FRP_PID)"
+# 持久化 FRP_PID、ALLOCATED_PORT、NODE_NAME、STATE_TIME 到状态文件，供 frp_stop / frp_status 使用
+echo "FRP_PID=$FRP_PID" > "$STATE_FILE"
+echo "ALLOCATED_PORT=$ALLOCATED_PORT" >> "$STATE_FILE"
+echo "NODE_NAME=$NODE_NAME" >> "$STATE_FILE"
+echo "STATE_TIME=$(date '+%Y-%m-%d %H:%M:%S')" >> "$STATE_FILE"
+log_info "frp进程启动成功 (PID: $FRP_PID, nodeName: $NODE_NAME)，状态已写入 $STATE_FILE"
 
 
 

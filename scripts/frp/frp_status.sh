@@ -1,8 +1,7 @@
 #!/bin/bash
-# frp客户端状态检查脚本
+# frp客户端状态检查脚本（通过 frp/frpc.state 查询）
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR/.."
+STATE_FILE="/Node/frp/frpc.state"
 
 # 颜色输出
 RED='\033[0;31m'
@@ -25,38 +24,42 @@ log_warn() {
 
 echo "=== frp客户端状态检查 ==="
 
-# 检查frp进程（使用 ps 替代 pgrep，兼容没有 procps 的环境）
-FRP_PID=$(ps aux 2>/dev/null | grep -v grep | grep "frpc -c frp/frpc.toml" | awk '{print $2}' | head -1)
-if [ -n "$FRP_PID" ]; then
-    log_info "frp客户端运行中 (PID: $FRP_PID)"
+# 从状态文件读取并检查进程是否存活
+if [ ! -f "$STATE_FILE" ]; then
+    log_warn "状态文件不存在: $STATE_FILE"
+    log_info "frp客户端未运行或未通过 frp_start 启动"
 else
-    log_error "frp客户端未运行"
+    # shellcheck source=/dev/null
+    source "$STATE_FILE"
+    echo -e "${BLUE}[状态]${NC} FRP_PID=$FRP_PID  ALLOCATED_PORT=$ALLOCATED_PORT  STATE_TIME=$STATE_TIME"
+
+    if [ -n "$FRP_PID" ] && kill -0 "$FRP_PID" 2>/dev/null; then
+        log_info "frp客户端运行中 (PID: $FRP_PID)"
+    else
+        log_warn "frp客户端进程已退出或不存在 (PID: ${FRP_PID:-无})"
+    fi
 fi
 
 # 检查配置文件
-if [ -f "frp/frpc.toml" ]; then
-    echo -e "${BLUE}[配置]${NC} frpc.toml 存在"
+if [ -f "/Node/frp/frpc.toml" ]; then
+    echo -e "${BLUE}[配置]${NC} /Node/frp/frpc.toml 存在"
 else
     log_error "frpc.toml 配置文件不存在"
 fi
 
 # 检查日志文件
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-LOG_FILE="$PROJECT_DIR/logs/frpc.log"
-
+LOG_FILE="/Node/logs/frpc.log"
 if [ -f "$LOG_FILE" ]; then
     echo -e "${BLUE}[日志]${NC} frpc.log 存在"
     echo -e "${BLUE}[日志]${NC} 最后几行:"
     tail -5 "$LOG_FILE" | sed 's/^/    /'
 else
     log_warn "frpc.log 日志文件不存在"
-    log_info "日志文件应位于: $LOG_FILE"
 fi
 
 # 检查frp可执行文件
-if [ -f "frp/frpc" ]; then
-    FRP_VERSION=$(./frp/frpc --version 2>/dev/null | head -1)
+if [ -f "/Node/frp/frpc" ]; then
+    FRP_VERSION=$(/Node/frp/frpc --version 2>/dev/null | head -1)
     if [ $? -eq 0 ]; then
         echo -e "${BLUE}[版本]${NC} $FRP_VERSION"
     else

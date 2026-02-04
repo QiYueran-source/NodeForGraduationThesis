@@ -257,12 +257,24 @@ class AgentDataAdapter:
             1._current_year_month += 1  
             2.cusor = 0
             3.DATA_CACHE_POOL.put_current_year_month(self._current_year_month[0], self._current_year_month[1])
+            4.删除 adapter 中最早一期的训练数据（已滚出窗口），保持内存小
         否则，返回False
         """
         if AgentDataAdapter._year_month_greater((self.end_year,self.end_month), self._current_year_month):
             self._current_year_month = self._roll_year_month(self._current_year_month, 1)
             self._portfolio_cursor = 0
             DATA_CACHE_POOL.put_current_year_month(self._current_year_month[0], self._current_year_month[1])
+
+            # 删除最早一期的训练数据（当前窗口为 current ~ current-(m-1)，不再需要 current-m）
+            m = self.train_config.get('m', 1)
+            ym_to_drop = self._roll_year_month(self._current_year_month, -m)
+            with self._data_pool_lock:
+                keys_to_drop = [k for k in self._train_data_pool if (k[0], k[1]) == ym_to_drop]
+            for (y, mo, code) in keys_to_drop:
+                self.delete_train_data(y, mo, code)
+            if keys_to_drop:
+                logger.info(f'win_roll: 已删除最早训练数据 {ym_to_drop[0]}-{ym_to_drop[1]}, 条数={len(keys_to_drop)}')
+
             logger.info(f'滚动成功，当前ym:{self._current_year_month[0]}-{self._current_year_month[1]}')
             return True
         else:

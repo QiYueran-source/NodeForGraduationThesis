@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-TCP服务端  
+TCP服务端
 监听4321端口，接收TCP连接并打印收到的消息
+参数通过命令行参数传给 worker，status 通过读取 worker 写入的 record.json 获取
 """
 # 库
 import subprocess
@@ -9,199 +10,180 @@ import signal
 import socket
 import sys
 import json
-import time 
+import time
 import os
-
-# 组件
-from src.worker import DATA_CACHE_POOL
-
+from pathlib import Path
 
 # 日志
 from src.utils.logger import get_module_logger
-logger = get_module_logger(__name__,'TCPReciver')
+logger = get_module_logger(__name__, 'TCPReciver')
 
-def handle_message(message_str: str,socket_client:socket):
+# tcp 进程内保存：当前 worker 的 pid 与 meta（便于获取 task_id、读 record.json）
+_worker_pid = None
+_meta = {}  # 含 task_id 等，用于 status 时拼 record.json 路径
+
+
+def _is_process_alive(pid):
+    """判断进程是否存活"""
+    if pid is None:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _read_record_json(task_id):
+    """从 /Node/data/{task_id}/record.json 读取状态，解析失败或文件不存在返回 None"""
+    path = Path(f'/Node/data/{task_id}/record.json')
+    if not path.exists():
+        return None
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        logger.debug("读取 record.json 失败: %s", e)
+        return None
+
+
+def handle_message(message_str: str, socket_client: socket):
     """
-    处理收到的消息  
+    处理收到的消息
     消息格式：json {"req":1,"meta":{}}
     meta:
-        - task_id: 任务id    
-        - start_year: 开始年份  
-        - end_year: 结束年份  
-        - end_month: 结束月份  
-        - N: 总股票数量    
-        - stock_list: 股票列表   
-        # - factors_list: 因子列表（避免麻烦，直接保存本地）   
-        - earliest_year_month: 最早的年份和月份,(year, month)  
-        - train_config: 训练配置   
-            - seed: 随机种子  
-            - n: 一个组合中的证券数量（算上现金，共n+1个证券）  
-            - max_portfolios_num: 对于总共n个证券，最多可以构建C(N,n)个组合,太大，所以设置最大组合数量    
-            - m: 回看的期数      
-            - mask_len: 因子掩码长度，默认60    
-            - model_config: 模型配置（cate: 0 表示 mlp1；config: 模型具体参数）
-            - performance_config: # 表现计算配置  
-                - risk_free_rate: 无风险利率   
-                - rolling_window: 滚动窗口期数  
-            - reward_config: 奖励配置   
-                - reward_weights: 奖励权重
-                    - rtr: 收益率权重   
-                    - vol: 波动权重   
-                    - sharpe: 夏普比率权重   
-                    - max_drawdown: 最大回测权重    
-
+        - task_id: 任务id
+        - start_year: 开始年份
+        - end_year: 结束年份
+        - end_month: 结束月份
+        - N: 总股票数量
+        - stock_list: 股票列表
+        - earliest_year_month: 最早的年份和月份,(year, month) 或 [year, month]
+        - train_config: 训练配置
     """
-    # 解析JSON
-    try:
-        # 解析message
-        message:dict = json.loads(message_str)
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON解析失败: {e}")
-        response = {
-            "error": f"JSON解析失败: {e}"
-        }
-        return response
+    global _worker_pid, _meta
 
-    # 获取req
+    try:
+        message = json.loads(message_str)
+    except json.JSONDecodeError as e:
+        logger.error("JSON解析失败: %s", e)
+        return {"error": f"JSON解析失败: {e}"}
+
     req = int(message.pop('req'))
 
-    # req可以取值-1,0,1
     if req == -1:
-        pid = DATA_CACHE_POOL.get_pid()
-        if pid:
-            os.kill(pid, signal.SIGTERM)
-        response = {"stop": "success"}
-        DATA_CACHE_POOL.put_pid(None)
-        return response
+        # 停止 worker
+        if _worker_pid and _is_process_alive(_worker_pid):
+            try:
+                os.kill(_worker_pid, signal.SIGTERM)
+            except OSError as e:
+                logger.warning("发送 SIGTERM 失败: %s", e)
+        _worker_pid = None
+        return {"stop": "success"}
 
     elif req == 0:
-        is_running = DATA_CACHE_POOL.get_running()
-        if is_running:
-            task_id = DATA_CACHE_POOL.get_task_id()
-            current_year_month = DATA_CACHE_POOL.get_current_year_month()
+        # 查询状态：以 pid 判断是否在跑，从 record.json 读 task_id / current_year_month
+        if _worker_pid and _is_process_alive(_worker_pid):
+            task_id = _meta.get('task_id')
+            current_year_month = None
+            if task_id:
+                data = _read_record_json(task_id)
+                if data:
+                    current_year_month = data.get('current_year_month')
             response = {
                 "running": 1,
                 "task_id": task_id,
                 "current_year_month": current_year_month,
             }
         else:
-            response = {
-                "running": 0,
-            }
+            _worker_pid = None
+            response = {"running": 0}
         return response
 
     elif req == 1:
-        # 检查是否启动
-        is_running = DATA_CACHE_POOL.get_running()
-        if is_running:
-            response = {
-                "error": "already running"
-            }
+        # 启动 worker：先检查是否已在跑，再写 run_config.json 并传 task_id
+        if _worker_pid and _is_process_alive(_worker_pid):
+            return {"error": "already running"}
+
+        meta = message.pop('meta')
+        task_id = meta.pop('task_id')
+
+        data_dir = Path('/Node/data')
+        task_path = data_dir / task_id
+        if task_path.exists():
+            return {"error": "task_id already exists"}
+
+        task_path.mkdir(parents=True, exist_ok=True)
+
+        cmd = [
+            "python", "worker.py",
+            "--task_id", task_id,
+            "--start_year", str(meta["start_year"]),
+            "--end_year", str(meta["end_year"]),
+            "--end_month", str(meta["end_month"]),
+            "--N", str(meta["N"]),
+            "--stock_list", json.dumps(meta["stock_list"], ensure_ascii=False),
+            "--earliest_year_month", json.dumps(meta["earliest_year_month"], ensure_ascii=False),
+            "--train_config", json.dumps(meta["train_config"], ensure_ascii=False),
+        ]
+        logger.info("启动 worker: python worker.py --task_id %s ...", task_id)
+        try:
+            proc = subprocess.Popen(cmd)
+        except Exception as e:
+            logger.error("启动 worker 失败: %s", e)
+            return {"error": f"start failed: {e}"}
+
+        _worker_pid = proc.pid
+        _meta = {"task_id": task_id}
+
+        time.sleep(5)
+        if _is_process_alive(_worker_pid):
+            response = {"success": "start success"}
         else:
-            # 获取meta
-            meta = message.pop('meta')
-
-            # 获取参数
-            task_id = meta.pop('task_id')
-            if f'/Node/data/{task_id}' in os.listdir('/Node/data'):
-                response = {
-                    "error": "task_id already exists"
-                }
-            else:
-                start_year = meta.pop('start_year')
-                end_year = meta.pop('end_year')
-                end_month = meta.pop('end_month')
-                N = meta.pop('N')
-                stock_list = meta.pop('stock_list')
-                earliest_year_month = meta.pop('earliest_year_month')
-                train_config = meta.pop('train_config')
-                
-                # 设置参数
-                DATA_CACHE_POOL.put_task_id(task_id)
-                DATA_CACHE_POOL.put_start_year(start_year)
-                DATA_CACHE_POOL.put_end_year(end_year)
-                DATA_CACHE_POOL.put_end_month(end_month)
-                DATA_CACHE_POOL.put_N(N)
-                DATA_CACHE_POOL.put_stock_list(stock_list)
-                DATA_CACHE_POOL.put_earliest_year_month(earliest_year_month)
-                DATA_CACHE_POOL.put_train_config(train_config)
-                
-                # 启动
-                cmd = [
-                    "python",
-                    "worker.py",
-                ]
-                logger.info(f"启动worker: {cmd}")
-                proc = subprocess.Popen(cmd)
-
-                # 保存进程号
-                pid = proc.pid  
-                DATA_CACHE_POOL.put_pid(pid)
-
-                # 等待5s，如果worker启动成功，则返回成功
-                time.sleep(5)
-                if DATA_CACHE_POOL.get_running():
-                    response = {
-                        "success": "start success"
-                    }
-                else:
-                    response = {
-                        "error": "start failed"
-                    }
+            response = {"error": "start failed"}
         return response
+
     else:
-        logger.error(f"req字段取值错误: {req}")
-        response = {
-            "error": f"req字段取值错误: {req}"
-        }
-        return response
+        logger.error("req 取值错误: %s", req)
+        return {"error": f"req字段取值错误: {req}"}
+
 
 def main():
-    # 创建TCP socket
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    
-    # 绑定到本地4321端口
     host = '127.0.0.1'
     port = 4321
-    
+
     try:
         server_socket.bind((host, port))
         server_socket.listen(5)
-        logger.info(f"TCP服务器启动，监听 {host}:{port}")
+        logger.info("TCP 服务器启动，监听 %s:%s", host, port)
         logger.info("等待连接和消息...")
-        
+
         while True:
-            # 接受连接
             client_socket, client_address = server_socket.accept()
-            logger.info(f"收到来自 {client_address} 的连接")
-            
-            # 接收数据
+            logger.info("收到来自 %s 的连接", client_address)
             try:
                 data = client_socket.recv(1024)
                 if data:
                     message_str = data.decode('utf-8', errors='strict').strip()
                     response = handle_message(message_str, client_socket)
-                    logger.info(f"返回响应: {response}")
+                    logger.info("返回响应: %s", response)
                     client_socket.sendall(json.dumps(response).encode('utf-8'))
-                
             except Exception as e:
-                logger.error(f"处理连接时出错: {e}")
+                logger.error("处理连接时出错: %s", e)
             finally:
                 client_socket.close()
                 logger.info("连接已关闭\n")
-                
+
     except KeyboardInterrupt:
         logger.info("服务器关闭")
     except Exception as e:
-        logger.error(f"服务器错误: {e}")
+        logger.error("服务器错误: %s", e)
         sys.exit(1)
     finally:
         server_socket.close()
 
-if __name__ == "__main__":
-    # 设置DATA_CACHE_POOL的running为False
-    DATA_CACHE_POOL.put_running(False)
 
-    # 启动
+if __name__ == "__main__":
     main()
