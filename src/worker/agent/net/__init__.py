@@ -1,3 +1,3 @@
-from src.worker.agent.net.mlp import MLP
+from src.worker.agent.net.adapter import NET_ADAPTER
 
-__all__ = ["MLP"]
+__all__ = ["NET_ADAPTER"]

@@ -1,7 +1,8 @@
 """
 网络适配器  
 通过统一的参数格式访问，调用不同的模型，封装模型内部细节，对外提供统一的接口。  
-model_config 结构见 DATA_CACHE_POOL 顶部注释（cate/cuda/opt/clip_grad_norm/dropout/config）。  
+model_config 结构见 DATA_CACHE_POOL 顶部注释（cate/cuda/opt/clip_grad_norm/dropout/config）。    
+
 """
 # 库
 import torch
@@ -61,14 +62,23 @@ class NetAdapter:
         if self.device.type == 'cuda':
             logger.info("使用cuda")
 
-    def train(self, x: torch.Tensor, y: torch.Tensor):
+    def act(self, obs:torch.Tensor)->torch.Tensor:
         """
-        训练模型
-        x: 输入
-        y: 输出
+        动作
+        obs: 观测(m,n,mask_len)维度tensor  
         """
-        x = x.to(self.device)
-        y = y.to(self.device)
-        self.model.train()
-        self.model.zero_grad()
-        loss = self.model(x)
+        if obs.dim() != 3 or obs.shape[0] != self.m or obs.shape[1] != self.m or obs.shape[2] != self.mask_len:
+            logger.error(f"观测维度错误，期望{(self.m,self.n,self.mask_len)}，实际{obs.shape}")
+            raise 
+        return self.model(obs)
+
+
+    def get_checkpoint(self) -> dict:
+        """
+        返回可供 safetensors 保存的 state_dict（键为 str，值为 CPU 上的 Tensor）。
+        SAVER 可直接用 safetensors.torch.save_file(get_checkpoint(), path) 保存。
+        """
+        state_dict = self.model.state_dict()
+        return {k: v.cpu().clone() for k, v in state_dict.items()}
+
+NET_ADAPTER = NetAdapter()

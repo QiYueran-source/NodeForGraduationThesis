@@ -1,4 +1,6 @@
-redis 
-dotenv  
-pyyaml 
+redis
+dotenv
+pyyaml
+safetensors
+
 

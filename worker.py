@@ -9,6 +9,7 @@ worker工作流程
 import src.setpath  # 设置路径
 
 # 库
+import threading
 import os
 import argparse
 import json
@@ -54,86 +55,48 @@ def parse_args_and_load_pool():
     DATA_CACHE_POOL.put_earliest_year_month(*earliest)
     DATA_CACHE_POOL.put_train_config(train_config)
 
-    # 记录
-    DATA_CACHE_POOL.put_running(True)
-    DATA_CACHE_POOL.put_pid(os.getpid())
+try:
+    parse_args_and_load_pool()
+except Exception as e:
+    logger.error("解析参数失败: %s", e)
+    sys.exit(1)
 
-parse_args_and_load_pool()
 
 # 其他组件
 from src.worker.data import data_thread  # 数据线程
 from src.worker.save import SAVER  # 保存器
-from src.worker.save import record_thread  # record 线程（写 record.json 供 tcp 查询）
 from src.worker.agent import AGENT_DATA_ADAPTER, REWARD_MANAGER  # 数据适配器，奖励管理器
 from src.worker.agent import MLP
 from src.worker.agent import RollingEnv
 
-def save_meta():
-    """保存 meta 信息"""
-    SAVER.save_meta()
-    logger.debug("meta 信息保存完成")
-
-def start_running():
-    """设置运行状态"""  
+def start():
+    # 设置运行状态
     DATA_CACHE_POOL.put_running(True)
+    DATA_CACHE_POOL.put_pid(os.getpid())
 
-def start_datathread():
-    """启动数据线程"""
-    data_thread.data_thread_start()
-    while not DATA_CACHE_POOL.contains_train(DATA_CACHE_POOL.get_start_year()):
-         time.sleep(1)  # 等待1s保证数据加载完成
-    logger.debug("数据线程启动完成")
+    # 初始保存meta、record数据
+    SAVER.save_meta() # 保存meta数据   
+    SAVER.save_record() # 保存record数据  
 
-def start_recordthread():
-    """启动 record 线程（定时写 record.json 供 tcp 查询状态）"""
-    record_thread.record_thread_start()
-    logger.debug("record 线程启动完成")  
+    # 启动数据线程 
+    data_thread.start_datathread()  # 启动数据线程 
+    time.sleep(10)  # 等待10s保证数据加载完成  
+
+    logger.info("数据线程启动完成，开始训练")
+
 
 def train():
-    """最简单训练循环：RollingEnv + MLP，每步 loss=-reward*log_prob 做 policy gradient 式更新。"""
-    tc = DATA_CACHE_POOL.get_train_config() or {}
-    n = int(tc.get("n", 1))
-    m = int(tc.get("m", 1))
-    mask_len = int(tc.get("mask_len", 60))
-
-    env = RollingEnv()
-    model = MLP(n, m, mask_len)
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-
-    obs, info = env.reset() # 数据加载器限制，一个task只能跑1轮  
-    episode_steps = 0
-    while DATA_CACHE_POOL.get_running():
-        obs_t = torch.from_numpy(obs).float().unsqueeze(0)  # (1, n, m, mask_len)
-        action_t = model(obs_t)  # (1, n+1)
-        log_prob = (torch.log(action_t.clamp(1e-8)) * action_t).sum(dim=-1).squeeze(0)
-        action_np = action_t.squeeze(0).detach().numpy()
-
-        next_obs, reward, terminated, truncated, info = env.step(action_np)
-        loss = -float(reward) * log_prob
-        if loss.requires_grad:
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-
-        episode_steps += 1
-        obs = next_obs
-        if terminated or truncated:
-            logger.debug("episode 结束 steps=%s reward=%s", episode_steps, reward)
-            break
-        if not DATA_CACHE_POOL.get_running():
-            logger.info("训练循环退出")
-            break
+    """使用NET_ADAPTER,ENV和RL_ADAPTER进行训练"""
+    pass
     
     
-
 def stop():
     # 保存
     SAVER.append_performance_and_reward_snapshot()  # 最后一次落盘
     SAVER.save_model()  # 保存模型
-    SAVER.save_status()  # 保存状态（写 record.json）
+    SAVER.save_status()  # 保存状态（异步写 record.json）
 
     # 停止
-    record_thread.record_thread_stop()
     data_thread.data_thread_stop()
 
     # 设置运行状态
@@ -144,12 +107,6 @@ def stop():
 
 if __name__ == "__main__":
     try:
-        parse_args_and_load_pool()
-    except Exception as e:
-        logger.error("解析参数失败: %s", e)
-        sys.exit(1)
-
-    try:
         logger.info("===========worker启动===========")
         logger.info("task_id: %s", DATA_CACHE_POOL.get_task_id())
         logger.info("start_year: %s", DATA_CACHE_POOL.get_start_year())
@@ -158,23 +115,22 @@ if __name__ == "__main__":
         logger.info("earliest_year_month: %s", DATA_CACHE_POOL.get_earliest_year_month())
         logger.info("train_config: %s", DATA_CACHE_POOL.get_train_config())
 
-        start_running()  # 设置运行状态
-        start_datathread()  # 启动数据线程
-        start_recordthread()  # 启动 record 线程（写 record.json 供 tcp 查询）
-        save_meta()  # 保存 meta 信息
-        train()  # 开始训练
+        # 开始运行
+        start()  
 
-        stop()
-        logger.info("===========worker运行结束===========\n\n")
-        sys.exit(0)
+        # 训练线程
+        train_thread = threading.Thread(target=train, daemon=True).start() # 开始训练线程，可以随时修改running来停止  
+        train_thread.join() # 等待训练线程结束
 
     except KeyboardInterrupt:
         logger.warning("收到中断信号，停止worker")
-        stop()
-        logger.info("===========worker停止===========\n\n")
         sys.exit(0)
 
     except Exception as e:
-        logger.error("worker运行失败: %s", e)
-        stop()
+        logger.error(f"worker运行失败: {e}")
         sys.exit(1)
+
+    finally:
+        stop() # 停止worker   
+        logger.info("===========worker运行结束===========\n\n")
+        sys.exit(0)
