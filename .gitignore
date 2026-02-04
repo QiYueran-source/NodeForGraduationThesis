@@ -13,8 +13,6 @@ data/*
 frp/frpc.toml
 
 # 容器开发
-.devcontainer
-
 # py缓存
 __pycache__/
 

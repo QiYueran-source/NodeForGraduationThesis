@@ -54,12 +54,11 @@ def handle_message(message_str: str, socket_client: socket):
     meta:
         - task_id: 任务id
         - start_year: 开始年份
-        - end_year: 结束年份
-        - end_month: 结束月份
+        - end_year: 结束年份（结束月份固定为 12，主机不需提供 end_month）
         - N: 总股票数量
         - stock_list: 股票列表
         - earliest_year_month: 最早的年份和月份,(year, month) 或 [year, month]
-        - train_config: 训练配置
+        - train_config: 训练配置（结构同 pool.py 顶部 train_config 注释：seed/n/max_portfolios_num/m/model_config 等）
     """
     global _worker_pid, _meta
 
@@ -120,7 +119,6 @@ def handle_message(message_str: str, socket_client: socket):
             "--task_id", task_id,
             "--start_year", str(meta["start_year"]),
             "--end_year", str(meta["end_year"]),
-            "--end_month", str(meta["end_month"]),
             "--N", str(meta["N"]),
             "--stock_list", json.dumps(meta["stock_list"], ensure_ascii=False),
             "--earliest_year_month", json.dumps(meta["earliest_year_month"], ensure_ascii=False),

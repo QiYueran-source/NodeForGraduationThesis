@@ -52,11 +52,9 @@ class RollingEnv(gym.Env):
     def reset(self, options=None):
         np.random.seed(self.seed)
         self._buffer = []
-        AGENT_DATA_ADAPTER._set_current_year_month()
+        # 训练开始时同步对齐后的当前窗口到 pool（根据 m 自动对齐）
+        AGENT_DATA_ADAPTER._set_current_year_month(sync_to_pool=True)
         AGENT_DATA_ADAPTER._portfolio_pool_cursor = 0
-        DATA_CACHE_POOL.put_current_year_month(
-            AGENT_DATA_ADAPTER._current_year_month[0], AGENT_DATA_ADAPTER._current_year_month[1]
-        )
         self._pending_portfolio = AGENT_DATA_ADAPTER.win_get_a_portfolio()
         obs = self._get_obs(self._pending_portfolio)
         if len(self._pending_portfolio) == 0:

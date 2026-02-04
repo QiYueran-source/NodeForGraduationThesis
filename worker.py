@@ -32,7 +32,6 @@ def parse_args_and_load_pool():
     parser.add_argument('--task_id', required=True, help='任务 id')
     parser.add_argument('--start_year', type=int, required=True)
     parser.add_argument('--end_year', type=int, required=True)
-    parser.add_argument('--end_month', type=int, required=True)
     parser.add_argument('--N', type=int, required=True)
     parser.add_argument('--stock_list', required=True, help='JSON 数组字符串，如 ["a","b"]')
     parser.add_argument('--earliest_year_month', required=True, help='JSON 数组 [year, month]')
@@ -46,11 +45,10 @@ def parse_args_and_load_pool():
         earliest = tuple(earliest)
     train_config = json.loads(args.train_config)
 
-    # 写入meta缓存池
+    # 写入meta缓存池（end_month 在 put_end_year 内固定为 12）
     DATA_CACHE_POOL.put_task_id(args.task_id)
     DATA_CACHE_POOL.put_start_year(args.start_year)
     DATA_CACHE_POOL.put_end_year(args.end_year)
-    DATA_CACHE_POOL.put_end_month(args.end_month)
     DATA_CACHE_POOL.put_N(args.N)
     DATA_CACHE_POOL.put_stock_list(stock_list)
     DATA_CACHE_POOL.put_earliest_year_month(*earliest)
@@ -70,6 +68,10 @@ from src.worker.agent import AGENT_DATA_ADAPTER, REWARD_MANAGER  # 数据适配�
 from src.worker.agent import MLP
 from src.worker.agent import RollingEnv
 
+def save_meta():
+    """保存 meta 信息"""
+    SAVER.save_meta()
+    logger.debug("meta 信息保存完成")
 
 def start_running():
     """设置运行状态"""  
@@ -159,6 +161,7 @@ if __name__ == "__main__":
         start_running()  # 设置运行状态
         start_datathread()  # 启动数据线程
         start_recordthread()  # 启动 record 线程（写 record.json 供 tcp 查询）
+        save_meta()  # 保存 meta 信息
         train()  # 开始训练
 
         stop()
@@ -173,4 +176,5 @@ if __name__ == "__main__":
 
     except Exception as e:
         logger.error("worker运行失败: %s", e)
+        stop()
         sys.exit(1)

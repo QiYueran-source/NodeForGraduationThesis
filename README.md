@@ -11,21 +11,27 @@
 - 2.meta: (仅启动命令带相关内容)  
     - task_id: 任务id    
     - start_year: 开始年份  
-    - end_year: 停止年份 
-    - end_month: 停止月份
+    - end_year: 停止年份（结束月份固定为 12，不需提供 end_month）
     - N: 总股票数量    
     - stock_list: 股票列表   
     - factors_list: 因子列表（避免麻烦，直接保存本地）   
     - earliest_year_month: 最早的年份和月份,(year, month)  
     - train_config: 训练配置   
-        - seed: 种子
+        - seed: 随机种子  
         - n: 一个组合中的证券数量（算上现金，共n+1个证券）  
         - max_portfolios_num: 对于总共n个证券，最多可以构建C(N,n)个组合,太大，所以设置最大组合数量    
         - m: 回看的期数      
-        - mask_len: 因子掩码长度 
-        - model_config: 模型配置 
-            - cate: 0表示mlp1, 
-            - config: 模型具体参数
+        - mask_len: 因子掩码长度，默认60    
+        - model_config: 模型配置
+            - cate: 模型类别，0 表示 mlp1  
+            - cuda: 是否使用cuda,1表示使用，0表示不使用  
+            - opt: 
+                - cate: 优化器类别，0表示adam，1表示sgd
+                - lr: 学习率
+                - weight_decay: L2正则化系数(如果优化器支持) 
+            - clip_grad_norm: 梯度裁剪范数  
+            - dropout:  dropout率  
+            - config: 具体模型参数(不同模型不同参数)
         - performance_config: # 表现计算配置  
             - risk_free_rate: 无风险利率   
             - rolling_window: 滚动窗口期数  
@@ -60,7 +66,7 @@
 - **启动失败**：`{"error": "start failed"}`  
   worker 进程已拉起，但约 5 秒内未将 running 置为真（可能启动报错或异常退出）。
 
-启动命令必须带 `meta` 字段，且 `meta` 内需包含：`task_id`, `start_year`, `end_year`, `end_month`, `N`, `stock_list`, `earliest_year_month`, `train_config`。缺字段会在服务端 pop 时抛错，未单独做字段级错误码。
+启动命令必须带 `meta` 字段，且 `meta` 内需包含：`task_id`, `start_year`, `end_year`, `N`, `stock_list`, `earliest_year_month`, `train_config`。缺字段会在服务端 pop 时抛错，未单独做字段级错误码。（end_month 固定为 12，主机不需提供。）
 
 ### 状态查询 (req=0)
 

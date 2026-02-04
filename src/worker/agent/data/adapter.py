@@ -20,12 +20,11 @@ logger = get_module_logger(__name__, prefix='[AgentDataAdapter]')
 
 class AgentDataAdapter:
     def __init__(self):
-        # 训练配置（使用时从 train_config 读取，不在此展开）
+        # 训练配置（结构见 pool.py 顶部 train_config 注释，使用时从 train_config 读取）
         self.train_config = DATA_CACHE_POOL.get_train_config() or {}
         self.N = DATA_CACHE_POOL.get_N()  # 总股票数量
         self.start_year = DATA_CACHE_POOL.get_start_year()  # 开始年份
-        self.end_year = DATA_CACHE_POOL.get_end_year()  # 结束年份
-        self.end_month = DATA_CACHE_POOL.get_end_month()  # 结束月份
+        self.end_year = DATA_CACHE_POOL.get_end_year()  # 结束年份（结束月份固定为 12）
         self.earliest_year_month = DATA_CACHE_POOL.get_earliest_year_month()  # 最早的年份和月份
         self.mask_len = self.train_config.get('mask_len', 60)  # 因子掩码长度
         self.mask = []
@@ -59,8 +58,8 @@ class AgentDataAdapter:
         # 生成掩码
         self._generate_mask()
 
-        # 设置当前窗口
-        self._set_current_year_month()
+        # 设置当前窗口（不写 pool，保留 Monitor 的 start_year-1 让首次加载从 start_year 开始）
+        self._set_current_year_month(sync_to_pool=False)
 
     def _load_config(self):
         """加载配置"""
@@ -125,18 +124,20 @@ class AgentDataAdapter:
         """
         return ym1[0] > ym2[0] or (ym1[0] == ym2[0] and ym1[1] > ym2[1])
 
-    def _set_current_year_month(self):
+    def _set_current_year_month(self, sync_to_pool: bool = True):
         """
-        初始化当前窗口  
+        初始化/对齐当前窗口：default=(start_year-1,1) 与 m 对齐取较晚者。
+        sync_to_pool=False 时只更新 self._current_year_month，不写 pool（供 __init__ 用，保留 Monitor 的 start_year-1 让首次加载从 start_year 开始）。
+        sync_to_pool=True 时同时写回 pool（供 reset() 用，训练开始时同步对齐后的窗口）。
         """
-        default_start_year_month = (self.start_year, 1)
+        default_start_year_month = (self.start_year - 1, 1)
         m = self.train_config.get('m', 1)
         earliest_available_year_month = self._roll_year_month(self.earliest_year_month, m - 1)
         if AgentDataAdapter._year_month_greater(earliest_available_year_month, default_start_year_month):
             self._current_year_month = earliest_available_year_month
-            DATA_CACHE_POOL.put_current_year_month(self._current_year_month[0], self._current_year_month[1])
         else:
             self._current_year_month = default_start_year_month
+        if sync_to_pool:
             DATA_CACHE_POOL.put_current_year_month(self._current_year_month[0], self._current_year_month[1])
         
     # ========== 训练数据接口 ==========
@@ -253,14 +254,14 @@ class AgentDataAdapter:
     # ========== 训练窗口接口 ========== 
     def win_roll(self)->bool:
         """
-        如果current_year_month < end_year, end_month，则滚动训练窗口  
+        如果 current_year_month < (end_year, 12)，则滚动训练窗口  
             1._current_year_month += 1  
             2.cusor = 0
-            3.DATA_CACHE_POOL.put_current_year_month(self._current_year_month[0], self._current_year_month[1])
+            3.DATA_CACHE_POOL.put_current_year_month(...)
             4.删除 adapter 中最早一期的训练数据（已滚出窗口），保持内存小
         否则，返回False
         """
-        if AgentDataAdapter._year_month_greater((self.end_year,self.end_month), self._current_year_month):
+        if AgentDataAdapter._year_month_greater((self.end_year, 12), self._current_year_month):
             self._current_year_month = self._roll_year_month(self._current_year_month, 1)
             self._portfolio_cursor = 0
             DATA_CACHE_POOL.put_current_year_month(self._current_year_month[0], self._current_year_month[1])

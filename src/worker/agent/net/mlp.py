@@ -12,7 +12,7 @@ class MLP(nn.Module):
     输出: (..., n+1)，和为 1
     """
 
-    def __init__(self, n: int, m: int, mask_len: int):
+    def __init__(self, n: int, m: int, mask_len: int, **config: dict):
         super().__init__()
         self.n = n
         self.m = m

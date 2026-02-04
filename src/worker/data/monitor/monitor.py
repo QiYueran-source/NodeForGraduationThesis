@@ -67,7 +67,6 @@ class DataMonitor:
                     if not self.started:
                         break
 
-                    logger.debug("监控周期: 开始检查数据")
                     self._check_and_load()
 
                 except Exception as e:
@@ -87,12 +86,10 @@ class DataMonitor:
             logger.error("未设置当前窗口 (year, month)")
             raise Exception("未设置当前窗口 (year, month)")
         now_year = current_ym[0]
-        logger.debug("_check_and_load: 当前窗口 current_year_month=%s", current_ym)
 
         years = DATA_CACHE_POOL.count_years_train()
         min_year = self._config.get('min_year', 1)
         max_year = self._config.get('max_year', 2)
-        logger.debug("_check_and_load: 缓存年份数 years=%d, min_year=%d, max_year=%d", years, min_year, max_year)
 
         if years <= min_year:
             need_load_years = max_year - years
@@ -105,9 +102,7 @@ class DataMonitor:
                 DATA_CACHE_POOL.batch_put_train(items)
                 self.now_year = year
                 DATA_CACHE_POOL.put_current_year_month(year, 12)
-                logger.info("数据已写入缓存池: year=%d, 条数=%d, 当前窗口=(%d, 12)", year, len(items), year)
-        else:
-            logger.debug("_check_and_load: 年份充足，无需加载")  
+                logger.info("数据已写入缓存池: year=%d, 条数=%d, 当前窗口=(%d, 12)", year, len(items), year)  
 
     def start(self):
         """

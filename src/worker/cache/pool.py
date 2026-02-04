@@ -9,7 +9,7 @@ meta：由主机提供
 - task_id: 任务id    
 - start_year: 开始年份  
 - end_year: 结束年份  
-- end_month: 结束月份  
+- end_year: 结束年份（end_month 固定为 12，不单独提供接口）
 - N: 总股票数量    
 - stock_list: 股票列表   
 - factors_list: 因子列表（避免麻烦，直接保存本地）   
@@ -21,8 +21,16 @@ meta：由主机提供
     - m: 回看的期数      
     - mask_len: 因子掩码长度，默认60    
     - model_config: 模型配置
-        - cate: 模型类别，0 表示 mlp1
-        - config: 模型具体参数
+        - cate: 模型类别，0 表示 mlp1  
+        - cuda: 是否使用cuda,1表示使用，0表示不使用  
+        - opt: 
+            - cate: 优化器类别，0表示adam，1表示sgd
+            - lr: 学习率
+            - weight_decay: L2正则化系数(如果优化器支持) 
+        - clip_grad_norm: 梯度裁剪范数  
+        - dropout:  dropout率  
+        - config: 具体模型参数(不同模型不同参数)
+
     - performance_config: # 表现计算配置  
         - risk_free_rate: 无风险利率   
         - rolling_window: 滚动窗口期数  
@@ -89,7 +97,7 @@ class DataCachePool:
                 'max_portfolios_num': None,
                 'm': None,
                 'mask_len': None,
-                'model_config': None,  # {'cate': 0, 'config': {...}}，cate=0 表示 mlp1
+                'model_config': None,  # 结构见本文件顶部 train_config 注释（cate/cuda/opt/clip_grad_norm/dropout/config）
             },
         }
 
@@ -322,19 +330,10 @@ class DataCachePool:
             return self._meta.get('end_year')
     
     def put_end_year(self, year: int):
-        """设置结束年月"""
+        """设置结束年份（结束月份固定为 12，与 start_year 风格一致）"""
         with self._meta_lock:
             self._meta['end_year'] = year
-
-    def get_end_month(self) -> Optional[int]:
-        """获取结束月份"""
-        with self._meta_lock:
-            return self._meta.get('end_month')
-    
-    def put_end_month(self, month: int):
-        """设置结束月份"""
-        with self._meta_lock:
-            self._meta['end_month'] = month
+            self._meta['end_month'] = 12
 
     def get_meta(self) -> Dict:
         """获取元数据"""
