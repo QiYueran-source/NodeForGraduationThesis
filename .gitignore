@@ -1,5 +1,5 @@
 # 日志
-logs/*
+logs/*.log
 !logs/README.md
 
 # 数据
