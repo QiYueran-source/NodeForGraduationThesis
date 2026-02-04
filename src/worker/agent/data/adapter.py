@@ -20,7 +20,7 @@ logger = get_module_logger(__name__, prefix='[AgentDataAdapter]')
 
 class AgentDataAdapter:
     def __init__(self):
-        # 训练配置（结构见 pool.py 顶部 train_config 注释，使用时从 train_config 读取）
+        # 训练配置：固定项从 meta 顶层读取（get_N 等），随机项从 get_train_config() 读取，结构见 pool.py 顶部。
         self.train_config = DATA_CACHE_POOL.get_train_config() or {}
         self.N = DATA_CACHE_POOL.get_N()  # 总股票数量
         self.start_year = DATA_CACHE_POOL.get_start_year()  # 开始年份
@@ -74,8 +74,8 @@ class AgentDataAdapter:
         """
         采样若干个组合
         """
-        n = self.train_config.get('n', 1)
-        max_portfolios_num = self.train_config.get('max_portfolios_num', 1000000)
+        n = DATA_CACHE_POOL.get_n() or 1
+        max_portfolios_num = DATA_CACHE_POOL.get_max_portfolios_num() or 1000000
         num = min(max_portfolios_num, math.comb(self.N, n))
         rst_set = set()  # 去重
         while len(rst_set) < num:
@@ -263,7 +263,10 @@ class AgentDataAdapter:
         """
         if AgentDataAdapter._year_month_greater((self.end_year, 12), self._current_year_month):
             self._current_year_month = self._roll_year_month(self._current_year_month, 1)
-            self._portfolio_cursor = 0
+            # 打乱组合顺序，使下一窗口的采样顺序与本月不同，保证多样性
+            with self._portfolio_pool_lock:
+                random.shuffle(self._portfolio_pool)
+                self._portfolio_cursor = 0
             DATA_CACHE_POOL.put_current_year_month(self._current_year_month[0], self._current_year_month[1])
 
             # 删除最早一期的训练数据（当前窗口为 current ~ current-(m-1)，不再需要 current-m）
@@ -338,7 +341,8 @@ class AgentDataAdapter:
                 return ()
             factors, rtr = result
             rtr_tuple.append(rtr)
-        rtr_tuple.append(self.train_config.get('performance_config', {}).get('risk_free_rate', 0.02))
+        perf = DATA_CACHE_POOL.get_performance_config() or {}
+        rtr_tuple.append(perf.get('risk_free_rate', 0.02))
         logger.debug(f"获取{self.win_get_current_year_month()}训练窗口的收益率,长度: {len(rtr_tuple)}")
         return tuple(rtr_tuple)
         

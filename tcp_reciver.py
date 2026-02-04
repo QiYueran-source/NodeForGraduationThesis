@@ -51,14 +51,7 @@ def handle_message(message_str: str, socket_client: socket):
     """
     处理收到的消息
     消息格式：json {"req":1,"meta":{}}
-    meta:
-        - task_id: 任务id
-        - start_year: 开始年份
-        - end_year: 结束年份（结束月份固定为 12，主机不需提供 end_month）
-        - N: 总股票数量
-        - stock_list: 股票列表
-        - earliest_year_month: 最早的年份和月份,(year, month) 或 [year, month]
-        - train_config: 训练配置（结构同 pool.py 顶部 train_config 注释：seed/n/max_portfolios_num/m/model_config 等）
+    meta 结构见 pool.py 顶部：顶层固定（task_id/start_year/end_year/N/stock_list/earliest_year_month/n/max_portfolios_num/env_config/performance_config）+ train_config 仅随机部分（seed/m/mask_len/model_config/reinforcement_config/reward_config）。
     """
     global _worker_pid, _meta
 
@@ -114,6 +107,7 @@ def handle_message(message_str: str, socket_client: socket):
 
         task_path.mkdir(parents=True, exist_ok=True)
 
+        # meta 新形式：顶层固定（n/max_portfolios_num/performance_config/env_config）+ train_config 仅随机部分
         cmd = [
             "python", "worker.py",
             "--task_id", task_id,
@@ -123,6 +117,10 @@ def handle_message(message_str: str, socket_client: socket):
             "--stock_list", json.dumps(meta["stock_list"], ensure_ascii=False),
             "--earliest_year_month", json.dumps(meta["earliest_year_month"], ensure_ascii=False),
             "--train_config", json.dumps(meta["train_config"], ensure_ascii=False),
+            "--n", str(meta["n"]),
+            "--max_portfolios_num", str(meta["max_portfolios_num"]),
+            "--performance_config", json.dumps(meta["performance_config"], ensure_ascii=False),
+            "--env_config", json.dumps(meta["env_config"], ensure_ascii=False),
         ]
         logger.info("启动 worker: python worker.py --task_id %s ...", task_id)
         try:

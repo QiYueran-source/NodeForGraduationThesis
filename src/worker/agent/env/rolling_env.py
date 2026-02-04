@@ -22,11 +22,18 @@ class RollingEnv(gym.Env):
 
     def __init__(self):
         super().__init__()
+
+        # 配置
         tc = DATA_CACHE_POOL.get_train_config() or {}
-        self.n = int(tc.get("n", 1))  # 每个组合标的数
+        self.n = int(DATA_CACHE_POOL.get_n() or 1)  # 每个组合标的数（固定，meta 顶层）
         self.m = int(tc.get("m", 1))  # 回看期数
         self.mask_len = int(tc.get("mask_len", 60))
         self.seed = int(tc.get("seed", 42))
+        env_config = DATA_CACHE_POOL.get_env_config() or {}
+        self.rf_end_year = int(env_config.get("rf_end_year", 2025))
+
+        # 到达 rf_end_year 的 12 月后一直返回 terminated=True，RL 端跳过学习
+        self._learning_ended = False
 
         # obs 三维，展平由网络实现
         self.observation_space = gym.spaces.Box(
@@ -51,10 +58,13 @@ class RollingEnv(gym.Env):
 
     def reset(self, options=None):
         np.random.seed(self.seed)
+
+        self._learning_ended = False
         self._buffer = []
+
         # 训练开始时同步对齐后的当前窗口到 pool（根据 m 自动对齐）
         AGENT_DATA_ADAPTER._set_current_year_month(sync_to_pool=True)
-        AGENT_DATA_ADAPTER._portfolio_pool_cursor = 0
+        AGENT_DATA_ADAPTER._portfolio_cursor = 0  # adapter 组合池游标
         self._pending_portfolio = AGENT_DATA_ADAPTER.win_get_a_portfolio()
         obs = self._get_obs(self._pending_portfolio)
         if len(self._pending_portfolio) == 0:
@@ -72,8 +82,8 @@ class RollingEnv(gym.Env):
         输出：
         - next_obs: 下一个观测，(n, m, mask_len)  
         - reward: 奖励  
-        - terminated: 是否终止  
-        - truncated: 是否截断  
+        - terminated: 是否终止, 当current_year_month 达到 rf_end_year 时终止  
+        - truncated: 是否截断, 窗口结束时为 True（轨迹可继续则 bootstrap）    
         - info: 信息  
         """
         zero_obs = np.zeros((self.n, self.m, self.mask_len), dtype=np.float32)
@@ -95,10 +105,17 @@ class RollingEnv(gym.Env):
         next_portfolio = AGENT_DATA_ADAPTER.win_get_a_portfolio()
 
         if len(next_portfolio) == 0:
-            # 当前窗口所有组合已收集完，算 reward 并滚动
+            # 当前窗口所有组合已收集完，窗口结束返回 truncated=True
+            truncated = True
+            year, month = AGENT_DATA_ADAPTER.win_get_current_year_month()
+
+            # 判断是否到达强化学习结束年份
+            if year > self.rf_end_year or (year == self.rf_end_year and month >= 12):
+                self._learning_ended = True
+            terminated = self._learning_ended
+
             portfolios = [p for p, _ in self._buffer]
             weights_list = [a for _, a in self._buffer]
-            year, month = AGENT_DATA_ADAPTER.win_get_current_year_month()
             REWARD_MANAGER.calc_all_performance(year, month, portfolios, weights_list)
             REWARD_MANAGER.normalized_all_performance(year, month, portfolios)
             REWARD_MANAGER.calc_all_reward(year, month, portfolios)
@@ -108,33 +125,33 @@ class RollingEnv(gym.Env):
             ]
             reward = float(np.mean(rewards)) if rewards else 0.0
 
-            self._buffer = [] # 清空缓冲区
+            self._buffer = []
 
-            # 滚动训练窗口
-            rolled = AGENT_DATA_ADAPTER.win_roll() 
+            rolled = AGENT_DATA_ADAPTER.win_roll()
             if rolled:
                 self._pending_portfolio = AGENT_DATA_ADAPTER.win_get_a_portfolio()
                 if len(self._pending_portfolio) == 0:
                     self._pending_portfolio = None
                     next_obs = zero_obs
-                    terminated = True
                 else:
                     next_obs = self._get_obs(self._pending_portfolio)
-                    terminated = False
             else:
                 self._pending_portfolio = None
                 next_obs = zero_obs
-                terminated = True
             info = {"year": year, "month": month, "reward": reward}
-            return next_obs, reward, terminated, False, info
+            return next_obs, reward, terminated, truncated, info
 
         # 同一窗口内下一组合，reward 延后
+        truncated = False
+        year, month = AGENT_DATA_ADAPTER._current_year_month[0], AGENT_DATA_ADAPTER._current_year_month[1]
+        if year > self.rf_end_year or (year == self.rf_end_year and month >= 12):
+            self._learning_ended = True
+        terminated = self._learning_ended
+
         self._pending_portfolio = next_portfolio
         next_obs = self._get_obs(next_portfolio)
         reward = 0.0
-        terminated = False
-        info = {
-            "year": AGENT_DATA_ADAPTER._current_year_month[0],
-            "month": AGENT_DATA_ADAPTER._current_year_month[1],
-        }
-        return next_obs, reward, terminated, False, info
+        info = {"year": year, "month": month}
+        return next_obs, reward, terminated, truncated, info
+
+ROLLING_ENV = RollingEnv()

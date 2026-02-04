@@ -1,8 +1,8 @@
 """
-网络适配器  
-通过统一的参数格式访问，调用不同的模型，封装模型内部细节，对外提供统一的接口。  
-model_config 结构见 DATA_CACHE_POOL 顶部注释（cate/cuda/opt/clip_grad_norm/dropout/config）。    
-
+网络适配器
+通过统一的参数格式访问，调用不同的模型，封装模型内部细节，对外提供统一的接口。
+配置来自 get_train_config()（随机部分），model_config 等结构见 pool.py 顶部【train_config = 随机】。
+设备：有 GPU 则用 cuda，否则 cpu，由运行时自动决定，无需配置。
 """
 # 库
 import torch
@@ -21,42 +21,41 @@ class NetAdapter:
         self.model:torch.nn.Module = None
 
         # 加载配置
-        self.m = DATA_CACHE_POOL.get_train_config().get('m', 1)
-        self.n = DATA_CACHE_POOL.get_train_config().get('n', 1)
-        self.mask_len = DATA_CACHE_POOL.get_train_config().get('mask_len', 60)
-        self.model_config = DATA_CACHE_POOL.get_train_config().get('model_config', {})
+        tc = DATA_CACHE_POOL.get_train_config() or {}
+        self.seed = tc.get('seed', 42)
+        self.m = tc.get('m', 1)
+        self.n = DATA_CACHE_POOL.get_n() or 1
+        self.mask_len = tc.get('mask_len', 60)
+        self.model_config = tc.get('model_config', {})
 
         # 模型配置
-        self.cuda = self.model_config.get('cuda', 0)
-        self.device = torch.device('cuda' if torch.cuda.is_available() and self.cuda else 'cpu')
-        self.opt = self.model_config.get('opt', {})
-        self.opt_cate = self.opt.get('cate', 0)
-        self.opt_lr = self.opt.get('lr', 1e-3)
-        self.opt_weight_decay = self.opt.get('weight_decay', 0)
-        self.clip_grad_norm = self.model_config.get('clip_grad_norm', 0)
+        self.cate = self.model_config.get('cate', 0)
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.dropout = self.model_config.get('dropout', 0)
         self.config = self.model_config.get('config', {})
+
+        # 设置随机种子
+        torch.manual_seed(self.seed)
         
         # 获取模型
-        self._set_model(self.model_config.get('cate', 0))
+        self._set_model()
 
-        # 检查cuda
         self._to_device()
 
-    def _set_model(self, cate:int):
+    def _set_model(self):
         """
         设置模型
         cate: 模型类别  
         - 0: mlp1
         """
-        if cate == 0:
-            self.model = MLP(self.n, self.m, self.mask_len, **self.config)
+        if self.cate == 0:
+            self.model = MLP(self.n, self.m, self.mask_len, self.dropout, **self.config)
         else:
             raise
 
     def _to_device(self):
         """
-        将模型移动到 self.device（cuda 或 cpu）
+        将模型移动到 self.device（有 GPU 则 cuda，否则 cpu，自动决定）
         """
         self.model.to(self.device)
         if self.device.type == 'cuda':

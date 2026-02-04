@@ -38,8 +38,8 @@ class RewardManager:
         # 表现配置 
         self._performance_config = DATA_CACHE_POOL.get_performance_config() or {}
 
-        # 奖励配置 
-        self._reward_config = DATA_CACHE_POOL.get_reward_config() or {}
+        # 奖励配置（来自 train_config，结构见 pool.py 顶部【train_config = 随机】）
+        self._reward_config = (DATA_CACHE_POOL.get_train_config() or {}).get('reward_config', {}) or {}
         self._reward_weights = self._reward_config.get('reward_weights', {})
 
         # 锁 

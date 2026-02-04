@@ -53,7 +53,7 @@ class Saver:
         return {k: list(v) if isinstance(v, tuple) else v for k, v in data.items()}
 
     def save_meta(self):
-        """保存元数据到本地"""
+        """保存 meta 到本地（结构见 pool.py 顶部：顶层固定 + train_config 随机）"""
         meta_path = self._get_base_path() / "meta.json"
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(DATA_CACHE_POOL.get_meta(), f, ensure_ascii=False)

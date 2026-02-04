@@ -5,41 +5,29 @@
 train: 由主机提供  
     - (code, year, month): [[因子],收益]   
 
-meta：由主机提供   
-- task_id: 任务id    
-- start_year: 开始年份  
-- end_year: 结束年份  
+meta：由主机提供，结构见下。约定：顶层 = 固定（环境统一），train_config = 随机（agent 异质性）。
+【顶层 = 固定】
+- task_id: 任务id
+- start_year: 开始年份
 - end_year: 结束年份（end_month 固定为 12，不单独提供接口）
-- N: 总股票数量    
-- stock_list: 股票列表   
-- factors_list: 因子列表（避免麻烦，直接保存本地）   
-- earliest_year_month: 最早的年份和月份,(year, month)  
-- train_config: 训练配置   
-    - seed: 随机种子  
-    - n: 一个组合中的证券数量（算上现金，共n+1个证券）  
-    - max_portfolios_num: 对于总共n个证券，最多可以构建C(N,n)个组合,太大，所以设置最大组合数量    
-    - m: 回看的期数      
-    - mask_len: 因子掩码长度，默认60    
-    - model_config: 模型配置
-        - cate: 模型类别，0 表示 mlp1  
-        - cuda: 是否使用cuda,1表示使用，0表示不使用  
-        - opt: 
-            - cate: 优化器类别，0表示adam，1表示sgd
-            - lr: 学习率
-            - weight_decay: L2正则化系数(如果优化器支持) 
-        - clip_grad_norm: 梯度裁剪范数  
-        - dropout:  dropout率  
-        - config: 具体模型参数(不同模型不同参数)
-
-    - performance_config: # 表现计算配置  
-        - risk_free_rate: 无风险利率   
-        - rolling_window: 滚动窗口期数  
-    - reward_config: 奖励配置   
-        - reward_weights: 奖励权重
-            - rtr: 收益率权重   
-            - vol: 波动权重   
-            - sharpe: 夏普比率权重   
-            - max_drawdown: 最大回测权重    
+- N: 总股票数量
+- stock_list: 股票列表
+- factors_list: 因子列表（避免麻烦，直接保存本地）
+- earliest_year_month: 最早的年份和月份,(year, month)
+- n: 一个组合中的证券数量（算上现金，共n+1个证券）
+- max_portfolios_num: 对于总共n个证券，最多可构建组合数上限
+- env_config: 环境配置
+    - rf_end_year: 强化学习结束年份(后续年份不再学习但继续计算)，月份默认12
+- performance_config: 表现计算配置
+    - risk_free_rate: 无风险利率
+    - rolling_window: 滚动窗口期数
+【train_config = 随机】
+- seed: 随机种子
+- m: 回看的期数
+- mask_len: 因子掩码长度，默认60
+- model_config: 模型配置（cate/dropout/config；设备有 GPU 则用 cuda，否则 cpu）
+- reinforcement_config: 强化学习配置（rl_config/cate/opt: lr/clip_grad_norm/weight_decay）
+- reward_config: 奖励配置（reward_weights: rtr/vol/sharpe/max_drawdown）
 
 record: 由节点维护  
 - running: 是否正在运行    
@@ -67,14 +55,18 @@ class DataCachePool:
         """
         self._cache: Dict[Tuple[str, int, int], Any] = {} # 缓存数据：键为 (code, year, month)，值为数据
         
-        # 结构化meta数据（由主机提供）
+        # 结构化 meta（由主机提供）。约定：顶层键为固定，train_config 仅存随机部分，见本文件顶部注释。
         self._meta: Dict[str, Any] = {
             'task_id': None,
             'start_year': None,
             'N': None,
             'stock_list': [],
+            'n': None,  # 固定，顶层。一个组合中的证券数量（算上现金共 n+1 个）
+            'max_portfolios_num': None,  # 固定，顶层。可构建组合数上限
+            'env_config': None,  # 固定，顶层。含 rf_end_year
+            'performance_config': None,  # 固定，顶层。含 risk_free_rate、rolling_window
             'factors_list': [
-                                'absacc', 'acc', 'accp', 'ag', 'am', 'ato', 
+                                'absacc', 'acc', 'accp', 'ag', 'am', 'ato',
                                 'beta', 'betad', 'betasq', 'bm', 'bm_ia', 'bveg',
                                 'cash', 'cashpr', 'cfdebt', 'cfp', 'cfp_ia', 
                                 'chfeps', 'chnanalyst', 'cinvest', 'coskew', 
@@ -91,13 +83,11 @@ class DataCachePool:
                                 'size_ia', 'skew', 'sp', 'std_dvol', 'std_turn', 'stdacc', 
                                 'tang', 'taxchg', 'turn', 'vol', 'volumed'
                             ],
-            'train_config': {
+            'train_config': {  # 仅随机部分，结构见本文件顶部【train_config = 随机】
                 'seed': None,
-                'n': None,
-                'max_portfolios_num': None,
                 'm': None,
                 'mask_len': None,
-                'model_config': None,  # 结构见本文件顶部 train_config 注释（cate/cuda/opt/clip_grad_norm/dropout/config）
+                'model_config': None,
             },
         }
 
@@ -260,13 +250,18 @@ class DataCachePool:
             self._meta['stock_list'] = stock_list
     
     def get_train_config(self) -> Optional[Dict]:
-        """获取训练配置"""
+        """获取训练配置（仅随机部分，结构见本文件顶部【train_config = 随机】）"""
         with self._meta_lock:
             return self._meta.get('train_config')
     
     def put_train_config(self, config: Dict):
-        """设置训练配置"""
+        """设置训练配置。若 config 含固定项（n/max_portfolios_num/env_config/performance_config），会拆出到 meta 顶层；仅随机部分写入 train_config。"""
         with self._meta_lock:
+            config = dict(config)
+            if 'n' in config:
+                self._meta['n'] = config.pop('n')
+            if 'max_portfolios_num' in config:
+                self._meta['max_portfolios_num'] = config.pop('max_portfolios_num')
             self._meta['train_config'] = config
     
     def get_factors_list(self) -> List[str]:
@@ -289,41 +284,46 @@ class DataCachePool:
         with self._meta_lock:
             self._meta['earliest_year_month'] = (year, month)
 
+    def get_n(self) -> Optional[int]:
+        """获取一个组合中的证券数量（固定，meta 顶层。算上现金共 n+1 个）"""
+        with self._meta_lock:
+            return self._meta.get('n')
+
+    def put_n(self, n: int):
+        """设置一个组合中的证券数量（固定，meta 顶层）"""
+        with self._meta_lock:
+            self._meta['n'] = n
+
+    def get_max_portfolios_num(self) -> Optional[int]:
+        """获取可构建组合数上限（固定，meta 顶层）"""
+        with self._meta_lock:
+            return self._meta.get('max_portfolios_num')
+
+    def put_max_portfolios_num(self, num: int):
+        """设置可构建组合数上限（固定，meta 顶层）"""
+        with self._meta_lock:
+            self._meta['max_portfolios_num'] = num
+
+    def get_env_config(self) -> Optional[Dict]:
+        """获取环境配置（固定，meta 顶层。含 rf_end_year）"""
+        with self._meta_lock:
+            return self._meta.get('env_config')
+
+    def put_env_config(self, config: Dict):
+        """设置环境配置（固定，meta 顶层。含 rf_end_year）"""
+        with self._meta_lock:
+            self._meta['env_config'] = config
+
     def put_performance_config(self, config: Dict):
-        """设置表现计算配置"""
+        """设置表现计算配置（固定，meta 顶层。含 risk_free_rate、rolling_window）"""
         with self._meta_lock:
             self._meta['performance_config'] = config
     
     def get_performance_config(self) -> Optional[Dict]:
-        """获取表现计算配置
-        - performance_config: # 表现计算配置  
-            - risk_free_rate: 无风险利率   
-            - rolling_window: 滚动窗口期数  
-        """
+        """获取表现计算配置（固定，meta 顶层。含 risk_free_rate、rolling_window）"""
         with self._meta_lock:
             return self._meta.get('performance_config')
     
-    def put_reward_config(self, config: Dict):
-        """设置奖励配置
-        - performance_config: # 表现计算配置  
-            - risk_free_rate: 无风险利率   
-            - rolling_window: 滚动窗口期数  
-        """
-        with self._meta_lock:
-            self._meta['reward_config'] = config
-    
-    def get_reward_config(self) -> Optional[Dict]:
-        """获取奖励配置
-        - reward_config: 奖励配置   
-            - reward_weights: 奖励权重
-                - rtr: 收益率权重   
-                - vol: 波动权重   
-                - sharpe: 夏普比率权重   
-                - max_drawdown: 最大回测权重    
-        """
-        with self._meta_lock:
-            return self._meta.get('reward_config')
-
     def get_end_year(self) -> Optional[int]:
         """获取结束年月"""
         with self._meta_lock:
@@ -336,7 +336,7 @@ class DataCachePool:
             self._meta['end_month'] = 12
 
     def get_meta(self) -> Dict:
-        """获取元数据"""
+        """获取元数据（结构见本文件顶部：顶层固定 + train_config 随机）"""
         with self._meta_lock:
             return dict(self._meta)
     

@@ -36,7 +36,11 @@ def parse_args_and_load_pool():
     parser.add_argument('--N', type=int, required=True)
     parser.add_argument('--stock_list', required=True, help='JSON 数组字符串，如 ["a","b"]')
     parser.add_argument('--earliest_year_month', required=True, help='JSON 数组 [year, month]')
-    parser.add_argument('--train_config', required=True, help='JSON 对象字符串')
+    parser.add_argument('--train_config', required=True, help='JSON 对象字符串（仅随机部分，结构见 pool.py 顶部）')
+    parser.add_argument('--n', type=int, required=True, help='一个组合中的证券数量（固定，顶层）')
+    parser.add_argument('--max_portfolios_num', type=int, required=True, help='可构建组合数上限（固定，顶层）')
+    parser.add_argument('--performance_config', required=True, help='JSON 对象，表现计算配置（固定，顶层）')
+    parser.add_argument('--env_config', required=True, help='JSON 对象，环境配置（固定，顶层）')
 
     args = parser.parse_args()
 
@@ -46,13 +50,17 @@ def parse_args_and_load_pool():
         earliest = tuple(earliest)
     train_config = json.loads(args.train_config)
 
-    # 写入meta缓存池（end_month 在 put_end_year 内固定为 12）
+    # 写入 meta 缓存池（结构见 pool.py 顶部：顶层固定 + train_config 随机；end_month 在 put_end_year 内固定为 12）
     DATA_CACHE_POOL.put_task_id(args.task_id)
     DATA_CACHE_POOL.put_start_year(args.start_year)
     DATA_CACHE_POOL.put_end_year(args.end_year)
     DATA_CACHE_POOL.put_N(args.N)
     DATA_CACHE_POOL.put_stock_list(stock_list)
     DATA_CACHE_POOL.put_earliest_year_month(*earliest)
+    DATA_CACHE_POOL.put_n(args.n)
+    DATA_CACHE_POOL.put_max_portfolios_num(args.max_portfolios_num)
+    DATA_CACHE_POOL.put_performance_config(json.loads(args.performance_config))
+    DATA_CACHE_POOL.put_env_config(json.loads(args.env_config))
     DATA_CACHE_POOL.put_train_config(train_config)
 
 try:
@@ -65,9 +73,7 @@ except Exception as e:
 # 其他组件
 from src.worker.data import data_thread  # 数据线程
 from src.worker.save import SAVER  # 保存器
-from src.worker.agent import AGENT_DATA_ADAPTER, REWARD_MANAGER  # 数据适配器，奖励管理器
-from src.worker.agent import MLP
-from src.worker.agent import RollingEnv
+from src.worker.agent import AGENT_DATA_ADAPTER, NET_ADAPTER, ROLLING_ENV  # 数据适配器
 
 def start():
     # 设置运行状态
@@ -79,7 +85,7 @@ def start():
     SAVER.save_record() # 保存record数据  
 
     # 启动数据线程 
-    data_thread.start_datathread()  # 启动数据线程 
+    data_thread.data_thread_start()  # 启动数据线程 
     time.sleep(10)  # 等待10s保证数据加载完成  
 
     logger.info("数据线程启动完成，开始训练")
@@ -87,7 +93,7 @@ def start():
 
 def train():
     """使用NET_ADAPTER,ENV和RL_ADAPTER进行训练"""
-    pass
+    
     
     
 def stop():
@@ -114,23 +120,27 @@ if __name__ == "__main__":
         logger.info("stock_list: %s", DATA_CACHE_POOL.get_stock_list())
         logger.info("earliest_year_month: %s", DATA_CACHE_POOL.get_earliest_year_month())
         logger.info("train_config: %s", DATA_CACHE_POOL.get_train_config())
-
+        
+        print(DATA_CACHE_POOL.get_meta()) # 调试一下  
+        
         # 开始运行
         start()  
 
         # 训练线程
-        train_thread = threading.Thread(target=train, daemon=True).start() # 开始训练线程，可以随时修改running来停止  
+        train_thread = threading.Thread(target=train, daemon=True) 
+        train_thread.start() # 开始训练线程
         train_thread.join() # 等待训练线程结束
+        exit_code = 0
 
     except KeyboardInterrupt:
         logger.warning("收到中断信号，停止worker")
-        sys.exit(0)
+        exit_code = 0
 
     except Exception as e:
         logger.error(f"worker运行失败: {e}")
-        sys.exit(1)
+        exit_code = 1
 
     finally:
         stop() # 停止worker   
         logger.info("===========worker运行结束===========\n\n")
-        sys.exit(0)
+        sys.exit(exit_code)

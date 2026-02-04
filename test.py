@@ -9,7 +9,7 @@ from pathlib import Path
 # 必须先设置 DATA_CACHE_POOL，再导入会创建 AGENT_DATA_ADAPTER / REWARD_MANAGER 的模块
 from src.worker.cache.pool import DATA_CACHE_POOL
 
-# 初始化缓存池：task_id、当前窗口、适配器与 RewardManager 所需 meta
+# 初始化缓存池：task_id、当前窗口、适配器与 RewardManager 所需 meta（结构见 pool.py 顶部：顶层固定 + train_config 随机）
 DATA_CACHE_POOL.put_task_id("test_reward_001")
 DATA_CACHE_POOL.put_current_year_month(2023, 12)  # 测试当前窗口：202312
 DATA_CACHE_POOL.put_start_year(2020)
@@ -19,19 +19,15 @@ DATA_CACHE_POOL.put_train_config({
     "n": 2,
     "max_portfolios_num": 10,
     "m": 1,
-    "performance_config": {"risk_free_rate": 0.02},
+    "reward_config": {"reward_weights": {"rtr": 0.25, "vol": 0.25, "sharpe": 0.25, "max_drawdown": 0.25}},
 })
 DATA_CACHE_POOL.put_earliest_year_month(2020, 1)
 DATA_CACHE_POOL.put_performance_config({
     "risk_free_rate": 0.02,
     "rolling_window": 6,  # 6 期滚动，仅对 202312 计算 vol/sharpe/max_drawdown
 })
-DATA_CACHE_POOL.put_reward_config({
-    "reward_weights": {"rtr": 0.25, "vol": 0.25, "sharpe": 0.25, "max_drawdown": 0.25},
-})
 
 # 再导入 RewardManager、适配器、Saver
-from src.worker.agent.reward import REWARD_MANAGER
 from src.worker.agent.data.adapter import AGENT_DATA_ADAPTER
 from src.worker.save.saver import Saver
 
