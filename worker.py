@@ -15,6 +15,7 @@ import argparse
 import json
 import time
 import sys
+import subprocess
 from pathlib import Path
 import torch
 
@@ -141,6 +142,50 @@ def train():
         if _save_cursor % 300 == 0 and _save_cursor >= 300:
             SAVER.append_performance_and_reward_snapshot()
             _save_cursor = 0
+
+def _read_node_id_from_frp_state(state_path: str = "/Node/frp/frpc.state") -> str | None:
+    """从 frpc.state 解析 NODE_NAME 作为 node_id，文件不存在或未包含 NODE_NAME 时返回 None。"""
+    path = Path(state_path)
+    if not path.exists():
+        return None
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith("NODE_NAME="):
+                return line.split("=", 1)[1].strip()
+    return None
+
+
+def send_result():
+    """发送结果到主机（调用 rsync 脚本，需 task_id 与 frpc.state 中的 NODE_NAME）。"""
+    logger.info("开始发送结果到主机")
+    try:
+        task_id = DATA_CACHE_POOL.get_task_id()
+        if not task_id:
+            logger.warning("task_id 为空，跳过发送结果")
+            return
+        node_id = _read_node_id_from_frp_state()
+        if not node_id:
+            logger.warning("未从 frpc.state 读取到 NODE_NAME，跳过发送结果")
+            return
+        env = {**os.environ, "task_id": task_id, "node_id": node_id}
+        script_path = Path("/Node/scripts/rsync/send_result.sh")
+        if not script_path.exists():
+            logger.warning(f"send_result.sh 不存在，跳过发送结果: {script_path}")
+            return
+        subprocess.run(
+            ["bash", str(script_path)],
+            env=env,
+            check=True,
+            cwd="/Node",
+        )
+        logger.info(f"发送结果到主机完成 (task_id={task_id}, node_id={node_id})")
+    except subprocess.CalledProcessError as e:
+        logger.exception(f"rsync 脚本执行失败 (exit {e.returncode})")
+        sys.exit(1)
+    except Exception:
+        logger.exception("发送结果到主机失败")
+        sys.exit(1)
         
         
 def stop():
@@ -188,6 +233,7 @@ if __name__ == "__main__":
         exit_code = 1
 
     finally:
-        stop() # 停止worker   
+        stop()  # 停止 worker
+        send_result()  # 推送结果到主机
         logger.info("===========worker运行结束===========\n\n")
         sys.exit(exit_code)
