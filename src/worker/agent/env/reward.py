@@ -24,6 +24,7 @@ from typing import Any, Tuple, List, Optional, Dict
 # 组件
 from src.worker.cache import DATA_CACHE_POOL
 from src.worker.agent.data.adapter import AGENT_DATA_ADAPTER  
+from src.utils.warn import deprecated
 
 # 日志
 from src.utils.logger import get_module_logger
@@ -198,13 +199,15 @@ class RewardManager:
         portfolio_return_series_for_rolling = portfolio_return_series_for_rolling[::-1] # 反转，idx从最早的ym开始  
 
         # 计算波动率 
-        performance.append(self._calculate_vol(portfolio_return_series_for_rolling))  
+        # 波动率取负数，因为波动率越大，奖励越小
+        performance.append(-1 * self._calculate_vol(portfolio_return_series_for_rolling))  
 
         # 计算夏普比率 
         performance.append(self._calculate_sharpe_ratio(portfolio_return_series_for_rolling))  
 
         # 计算最大回撤 
-        performance.append(self._calculate_max_drawdown(portfolio_return_series_for_rolling))  
+        # 最大回撤取负数，因为最大回撤越大，奖励越小  
+        performance.append(-1 * self._calculate_max_drawdown(portfolio_return_series_for_rolling))  
 
         # 保存表现
         record['performance'] = performance
@@ -214,99 +217,73 @@ class RewardManager:
             self._record[key] = record
             logger.debug(f"保存记录: {key}, {record}")
  
-    def calc_all_performance(self, year:int, month:int, portfolios:List[Tuple[str]], decision_weights:List[Tuple[float]], max_workers:Optional[int] = None):
-        """
-        批量计算当前窗口下所有组合的表现（多线程并行）。
+    def normalize_portfolio_performance(self, year:int, month:int, portfolio: Tuple[str]) -> Optional[List[float]]:
+        """归一化组合表现（纵向/滚动窗口标准化，便于在线计算奖励）
 
-        输入：
-        - year: 年份
-        - month: 月份
-        - portfolios: 组合列表，每个元素为 (code1, code2, ...)
-        - decision_weights: 组合权重列表（agent决策），与 portfolios 一一对应，每个元素为 (w1, w2, ..., w_cash)
-        - max_workers: 并行线程数，None 表示使用默认（min(32, num_portfolios+4)）
+        使用 performance_config.std_window 作为纵向标准化窗口：从当前 (year, month) 往前取
+        std_window 期，收集这些期内所有组合的该指标值，计算均值和标准差后对当前组合做 z-score。
 
-        将每个组合的表现写入 self._record，不返回。
-        """
-        if len(portfolios) != len(decision_weights):
-            logger.error(f"组合列表和decision_weights列表长度不一致: {len(portfolios)} != {len(decision_weights)}")
-            raise ValueError(f"组合列表和decision_weights列表长度不一致: {len(portfolios)} != {len(decision_weights)}")
-        n = len(portfolios)
-        workers = max_workers if max_workers is not None else min(32, n + 4)
-
-        def _task(i: int) -> None:
-            self.calc_portfolio_performance(year, month, portfolios[i], decision_weights[i])
-
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            list(executor.map(_task, range(n)))
-
-    def normalize_portfolio_performance(self, year:int, month:int, portfolio: Tuple[str]) -> List[float]:
-        """归一化组合表现
         输入：
         - year: 年份
         - month: 月份
         - portfolio: 组合
-        输出：归一化表现
+        输出：归一化表现 [norm_rtr, norm_vol, norm_sharpe, norm_max_drawdown]，无记录时返回 None
         """
-        # 键
         key = (year, month, portfolio)
 
-        # 获取需要归一化的组合记录
         portfolio_performance_record = self._record.get(key, {}).get('performance', [])
-        if not portfolio_performance_record:
-            logger.warning(f"组合{portfolio}在{year}年{month}月没有记录，无法计算归一化表现")
-            return
+        if not portfolio_performance_record or len(portfolio_performance_record) != 4:
+            logger.warning(f"组合{portfolio}在{year}年{month}月没有记录或表现长度非4，无法计算归一化表现")
+            return None
 
-        # 获取该窗口的表现序列
-        performance_list = [[] for _ in range(4)] # 4个表现空序列
-        # 按 key 筛，再取 value
-        all_portfolio_record_in_year_month = [
-            self._record[k] for k in self._record
-            if k[0] == year and k[1] == month
-        ]
-
-        # 获取窗口表现序列 
-        for record in all_portfolio_record_in_year_month:
-            performance = record.get('performance')
-            if performance:
-                performance_list[0].append(performance[0])
-                performance_list[1].append(performance[1])
-                performance_list[2].append(performance[2])
-                performance_list[3].append(performance[3])
-
-        # 获取每一个表现的均值和标准差
-        if (
-            len(performance_list[0]) == 0 or len(performance_list[0]) == 1 or 
-            len(performance_list[1]) == 0 or len(performance_list[1]) == 1 or 
-            len(performance_list[2]) == 0 or len(performance_list[2]) == 1 or 
-            len(performance_list[3]) == 0 or len(performance_list[3]) == 1
-        ):
-            logger.warning(f"窗口表现序列长度小于2，无法计算均值和标准差，记录为0")
+        std_window = self._performance_config.get('std_window')
+        if std_window is None:
+            logger.warning("performance_config.std_window 未配置，纵向标准化使用默认窗口 24")
+            std_window = 24
+        if std_window < 2:
+            logger.warning(f"performance_config.std_window={std_window} 不足2，无法计算标准差，使用 mean=0 std=1")
             mean_list = [0.0, 0.0, 0.0, 0.0]
             std_list = [1.0, 1.0, 1.0, 1.0]
         else:
-            mean_list = [np.mean(performance_list[i]) for i in range(4)]
-            std_list = [np.std(performance_list[i]) for i in range(4)]
+            # 纵向：收集过去 std_window 期内所有记录的各指标值（不包含当前 (year, month)）
+            performance_list = [[] for _ in range(4)]
+            for i in range(1, std_window + 1):
+                y, m = AGENT_DATA_ADAPTER._roll_year_month((year, month), -i)
+                for k, rec in self._record.items():
+                    if (k[0], k[1]) != (y, m):
+                        continue
+                    perf = rec.get('performance')
+                    if perf and len(perf) >= 4:
+                        for j in range(4):
+                            performance_list[j].append(perf[j])
 
-        # 归一化组合表现
-        normalized_performance = [(portfolio_performance_record[i] - mean_list[i]) / (std_list[i] + 1e-6) for i in range(4)]
+            if (
+                len(performance_list[0]) < 2 or len(performance_list[1]) < 2 or
+                len(performance_list[2]) < 2 or len(performance_list[3]) < 2
+            ):
+                logger.warning(
+                    f"纵向窗口内样本数不足2 (rtr={len(performance_list[0])}, vol={len(performance_list[1])}, "
+                    f"sharpe={len(performance_list[2])}, max_dd={len(performance_list[3])})，使用 mean=0 std=1"
+                )
+                mean_list = [0.0, 0.0, 0.0, 0.0]
+                std_list = [1.0, 1.0, 1.0, 1.0]
+            else:
+                mean_list = [float(np.mean(performance_list[i])) for i in range(4)]
+                std_list = [float(np.std(performance_list[i]) + 1e-6) for i in range(4)]
 
-        # 记录 
+        normalized_performance = [
+            (portfolio_performance_record[i] - mean_list[i]) / std_list[i]
+            for i in range(4)
+        ]
+
         with self._record_lock:
             self._record[key]['normalized_performance'] = normalized_performance
 
-    def normalized_all_performance(self, year:int, month:int, portfolios:List[Tuple[str]], max_workers:Optional[int] = None):
-        """批量计算当前窗口下所有组合的归一化表现（多线程并行）"""
-        n = len(portfolios)
-        workers = max_workers if max_workers is not None else min(32, n + 4)
-
-        def _task(i: int) -> None:
-            self.normalize_portfolio_performance(year, month, portfolios[i])
-
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            list(executor.map(_task, range(n)))
+        return normalized_performance
 
     def calc_portfolio_reward(self, year:int, month:int, portfolio: Tuple[str]) -> float:
-        """计算组合奖励
+        """
+        计算组合奖励
         输入：
         - year: 年份
         - month: 月份
@@ -339,8 +316,76 @@ class RewardManager:
 
         return reward
 
+    # =============== 弃用接口 ===============  
+    @deprecated("use contains_performance for online reward")
+    def contains_reward(self, year: int, month: int, portfolios: List[Tuple[str]]) -> bool:
+        """判断 (year, month) 下是否已为所有 portfolios 计算过奖励。"""
+        if not portfolios:
+            return False
+        with self._record_lock:
+            return all((year, month, tuple(p)) in self._record for p in portfolios)
+
+    @deprecated("use calc_portfolio_performance for online reward")
+    def calc_all_performance(self, year:int, month:int, portfolios:List[Tuple[str]], decision_weights_list:List[Tuple[float]], max_workers:Optional[int] = None):
+        """
+        弃用
+
+        批量计算当前窗口下所有组合的表现（多线程并行）。
+
+        输入：
+        - year: 年份
+        - month: 月份
+        - portfolios: 组合列表，每个元素为 (code1, code2, ...)
+        - decision_weights: 组合权重列表（agent决策），与 portfolios 一一对应，每个元素为 (w1, w2, ..., w_cash)
+        - max_workers: 并行线程数，None 表示使用默认（min(32, num_portfolios+4)）
+
+        将每个组合的表现写入 self._record，不返回。
+        """
+        if len(portfolios) != len(decision_weights_list):
+            logger.error(f"组合列表和decision_weights列表长度不一致: {len(portfolios)} != {len(decision_weights_list)}")
+            raise ValueError(f"组合列表和decision_weights列表长度不一致: {len(portfolios)} != {len(decision_weights_list)}")
+        n = len(portfolios)
+        workers = max_workers if max_workers is not None else min(32, n + 4)
+
+        def _task(i: int) -> None:
+            self.calc_portfolio_performance(year, month, portfolios[i], decision_weights_list[i])
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            list(executor.map(_task, range(n)))
+
+    @deprecated("use normalize_portfolio_performance for online reward")
+    def normalized_all_performance(self, year:int, month:int, portfolios:List[Tuple[str]], max_workers:Optional[int] = None):
+        """
+        弃用
+
+        批量计算当前窗口下所有组合的归一化表现（多线程并行）。
+
+        输入：
+        - year: 年份
+        - month: 月份
+        - portfolios: 组合列表，每个元素为 (code1, code2, ...)
+        """
+        n = len(portfolios)
+        workers = max_workers if max_workers is not None else min(32, n + 4)
+
+        def _task(i: int) -> None:
+            self.normalize_portfolio_performance(year, month, portfolios[i])
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            list(executor.map(_task, range(n)))
+
+    @deprecated("use calc_portfolio_reward for online reward")
     def calc_all_reward(self, year:int, month:int, portfolios:List[Tuple[str]], max_workers:Optional[int] = None):
-        """批量计算当前窗口下所有组合的奖励（多线程并行）"""
+        """
+        弃用
+
+        批量计算当前窗口下所有组合的奖励（多线程并行）。
+
+        输入：
+        - year: 年份
+        - month: 月份
+        - portfolios: 组合列表，每个元素为 (code1, code2, ...)
+        """
         n = len(portfolios)
         workers = max_workers if max_workers is not None else min(32, n + 4)
 
@@ -349,7 +394,35 @@ class RewardManager:
 
         with ThreadPoolExecutor(max_workers=workers) as executor:
             list(executor.map(_task, range(n)))
- 
+    
+    @deprecated("use calc_portfolio_performance for online reward")
+    def calc_reward_in_advance(self, year:int, month:int, portfolios:List[Tuple[str]], decision_weights_list:List[Tuple[float]])->bool:
+        """
+        弃用
+
+        计算提前奖励
+
+        输入：
+        - year: 年份
+        - month: 月份
+        - portfolios: 组合列表，每个元素为 (code1, code2, ...)
+        
+        """
+        # 验证参数
+        if len(portfolios) != len(decision_weights_list):
+            logger.error(f"组合列表和decision_weights列表长度不一致: {len(portfolios)} != {len(decision_weights_list)}")
+            raise 
+        
+        # 判断是否已计算过奖励
+        if self.contains_reward(year, month, portfolios):
+            return False
+        
+        # 计算奖励
+        self.calc_all_performance(year, month, portfolios, decision_weights_list)
+        self.normalized_all_performance(year, month, portfolios)
+        self.calc_all_reward(year, month, portfolios)
+        return True
+
     # =============== 保存接口 ===============  
     def get_incremental_snapshot(self, year: int, month: int) -> Dict[Tuple[int, int, Tuple[str]], Dict]:
         """获取增量快照
