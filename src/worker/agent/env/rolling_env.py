@@ -1,11 +1,11 @@
 """
-滚动窗口 Gym 环境：一步 = 一个组合，obs = (n, m, mask_len)，action = (n+1)，展平由网络实现。
-同一窗口内缓冲所有组合的 action 后统一算 reward。
+滚动窗口 Gym 环境：一组合一局，obs = (n, m, mask_len)，action = (n+1)。
+reset 返回下一组合的观测；step 内在线计算 reward 并结束本局。
 """
 # 库
+from typing import Tuple, Optional
 import numpy as np
 import gymnasium as gym
-from typing import Tuple
 
 # 组件
 from src.worker.cache.pool import DATA_CACHE_POOL
@@ -18,7 +18,7 @@ logger = get_module_logger(__name__, prefix="[RollingEnv]")
 
 
 class RollingEnv(gym.Env):
-    """一步一个组合：obs=(n,m,mask_len)，action=(n+1)；窗口内缓冲 action 后统一算 reward。"""
+    """一组合一局：obs=(n,m,mask_len)，action=(n+1)；step 内在线算 reward 并结束本局。"""
 
     def __init__(self):
         super().__init__()
@@ -29,11 +29,6 @@ class RollingEnv(gym.Env):
         self.m = int(tc.get("m", 1))  # 回看期数
         self.mask_len = int(tc.get("mask_len", 60))
         self.seed = int(tc.get("seed", 42))
-        env_config = DATA_CACHE_POOL.get_env_config() or {}
-        self.rf_end_year = int(env_config.get("rf_end_year", 2025))
-
-        # 到达 rf_end_year 的 12 月后一直返回 terminated=True，RL 端跳过学习
-        self._learning_ended = False
 
         # obs 三维，展平由网络实现
         self.observation_space = gym.spaces.Box(
@@ -43,9 +38,10 @@ class RollingEnv(gym.Env):
             low=0.0, high=1.0, shape=(self.n + 1,), dtype=np.float32
         )
 
-        # 一步一个组合：缓冲当前窗口的 (portfolio, action)，下一组合由 _pending_portfolio 表示
-        self._buffer: list = []  # [(portfolio_tuple, weights_tuple), ...]
-        self._pending_portfolio = None  # 当前 step 返回的 obs 对应的组合，下次 step(action) 时用
+        # 占位零观测（本局结束或无组合时返回，只读勿改）
+        self._zero_obs = np.zeros((self.n, self.m, self.mask_len), dtype=np.float32)
+        # 当前 obs 对应的组合，下次 step(action) 时用
+        self._pending_portfolio = None
 
     def _get_obs(self, portfolio) -> np.ndarray:
         """返回该组合的因子 (n, m, mask_len)，不展平。"""
@@ -56,102 +52,85 @@ class RollingEnv(gym.Env):
             return np.zeros((self.n, self.m, self.mask_len), dtype=np.float32)
         return t.numpy().astype(np.float32)
 
-    def reset(self, options=None):
-        np.random.seed(self.seed)
-
-        self._learning_ended = False
-        self._buffer = []
-
-        # 训练开始时同步对齐后的当前窗口到 pool（根据 m 自动对齐）
-        AGENT_DATA_ADAPTER._set_current_year_month(sync_to_pool=True)
-        AGENT_DATA_ADAPTER._portfolio_cursor = 0  # adapter 组合池游标
-        self._pending_portfolio = AGENT_DATA_ADAPTER.win_get_a_portfolio()
-        obs = self._get_obs(self._pending_portfolio)
-        if len(self._pending_portfolio) == 0:
-            self._pending_portfolio = None
-        info = {
-            "year": AGENT_DATA_ADAPTER._current_year_month[0],
-            "month": AGENT_DATA_ADAPTER._current_year_month[1],
-        }
-        return obs, info
-
-    def step(self, action)->Tuple[np.ndarray, float, bool, bool, dict]:
+    def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
         """
+        重置环境
         输入：
-        - action: 动作，(n+1)维的权重向量，和为1  
-        输出：
-        - next_obs: 下一个观测，(n, m, mask_len)  
-        - reward: 奖励  
-        - terminated: 是否终止, 当current_year_month 达到 rf_end_year 时终止  
-        - truncated: 是否截断, 窗口结束时为 True（轨迹可继续则 bootstrap）    
-        - info: 信息  
+        - seed: 随机种子
+        - options: 选项
+        
+        对一个portfolio的决策视为一局游戏  
+        重置，会获取当前窗口的下一个portfolio，并返回其观测  
+        如果已经用完，会自动rolling  
         """
-        zero_obs = np.zeros((self.n, self.m, self.mask_len), dtype=np.float32)
-        if self._pending_portfolio is None or len(self._pending_portfolio) == 0:
-            return zero_obs, 0.0, True, False, {"msg": "no pending portfolio"}
+        if seed is None:
+            seed = self.seed
+        super().reset(seed=seed, options=options)
+        np.random.seed(seed)
 
-        # 当前 obs 对应的组合的 action
-        w = np.asarray(action, dtype=np.float32).flatten()
-
-        # 权重恢复(如果权重和不为1，则归一化, 允许1e-6误差)
-        if w.sum() > 1 + 1e-6 or w.sum() < 1 - 1e-6:
-            w = np.clip(w, 1e-6, 1.0)
-            w = w / w.sum()
-
-        # 将当前组合和权重加入缓冲区
-        self._buffer.append((tuple(self._pending_portfolio), tuple(float(x) for x in w)))
-
-        # 下一个组合
+        # 获取当前窗口的下一个 portfolio
         next_portfolio = AGENT_DATA_ADAPTER.win_get_a_portfolio()
-
         if len(next_portfolio) == 0:
-            # 当前窗口所有组合已收集完，窗口结束返回 truncated=True
-            truncated = True
-            year, month = AGENT_DATA_ADAPTER.win_get_current_year_month()
+            AGENT_DATA_ADAPTER.win_roll()
+            next_portfolio = AGENT_DATA_ADAPTER.win_get_a_portfolio()
 
-            # 判断是否到达强化学习结束年份
-            if year > self.rf_end_year or (year == self.rf_end_year and month >= 12):
-                self._learning_ended = True
-            terminated = self._learning_ended
-
-            portfolios = [p for p, _ in self._buffer]
-            weights_list = [a for _, a in self._buffer]
-            REWARD_MANAGER.calc_all_performance(year, month, portfolios, weights_list)
-            REWARD_MANAGER.normalized_all_performance(year, month, portfolios)
-            REWARD_MANAGER.calc_all_reward(year, month, portfolios)
-            rewards = [
-                REWARD_MANAGER._record.get((year, month, p), {}).get("reward", 0.0)
-                for p in portfolios
-            ]
-            reward = float(np.mean(rewards)) if rewards else 0.0
-
-            self._buffer = []
-
-            rolled = AGENT_DATA_ADAPTER.win_roll()
-            if rolled:
-                self._pending_portfolio = AGENT_DATA_ADAPTER.win_get_a_portfolio()
-                if len(self._pending_portfolio) == 0:
-                    self._pending_portfolio = None
-                    next_obs = zero_obs
-                else:
-                    next_obs = self._get_obs(self._pending_portfolio)
-            else:
+            if len(next_portfolio) == 0:
+                logger.warning("没有可用的portfolio，返回zero_obs")
                 self._pending_portfolio = None
-                next_obs = zero_obs
-            info = {"year": year, "month": month, "reward": reward}
-            return next_obs, reward, terminated, truncated, info
-
-        # 同一窗口内下一组合，reward 延后
-        truncated = False
-        year, month = AGENT_DATA_ADAPTER._current_year_month[0], AGENT_DATA_ADAPTER._current_year_month[1]
-        if year > self.rf_end_year or (year == self.rf_end_year and month >= 12):
-            self._learning_ended = True
-        terminated = self._learning_ended
+                info = {"msg": "no pending portfolio", "no_more_episodes": True}
+                return self._zero_obs, info
 
         self._pending_portfolio = next_portfolio
-        next_obs = self._get_obs(next_portfolio)
-        reward = 0.0
-        info = {"year": year, "month": month}
-        return next_obs, reward, terminated, truncated, info
+        obs = self._get_obs(next_portfolio)
+
+        # 获取年月
+        year, month = AGENT_DATA_ADAPTER.win_get_current_year_month()
+        info = {"year": year, "month": month, "msg": "success"}
+
+        return obs, info
+
+    def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, bool, dict]:
+        """
+        输入：
+        - action: 动作，(n+1)维的权重向量，和为1
+        输出：
+        - next_obs: 占位零观测（本局结束）
+        - reward: 奖励，在线计算
+        - terminated: True
+        - truncated: False
+        - info: 信息
+        """
+        year, month = AGENT_DATA_ADAPTER.win_get_current_year_month()
+        info = {"year": year, "month": month, "msg": "failed"}
+
+        # action 转换
+        if not isinstance(action, np.ndarray):
+            logger.warning("action 不是np.ndarray，转换为np.ndarray")
+            action = np.asarray(action)
+        if action.ndim != 1:
+            logger.warning("action 不是一维数组，转换为一维数组")
+            action = action.reshape(-1)
+        if action.shape[0] != self.n + 1:
+            logger.warning("action 长度不为n+1，返回zero_obs")
+            info["reason"] = "invalid_action_length"
+            return self._zero_obs, 0.0, True, False, info
+
+        action_sum = float(action.sum())
+        if action_sum > 1.0 + 1e-3 or action_sum < 1.0 - 1e-3:
+            logger.warning("action 和不为1(允许1e-3误差)，进行归一化")
+            action = action / action_sum
+        action = tuple(action.tolist())
+
+        # 计算表现
+        if self._pending_portfolio is not None and self._pending_portfolio:
+            REWARD_MANAGER.calc_portfolio_performance(year, month, self._pending_portfolio, action)
+            REWARD_MANAGER.normalize_portfolio_performance(year, month, self._pending_portfolio)
+            reward = REWARD_MANAGER.calc_portfolio_reward(year, month, self._pending_portfolio)
+        else:
+            reward = 0.0
+
+        info = {"year": year, "month": month, "msg": "success"}
+        self._pending_portfolio = None
+        return self._zero_obs, reward, True, False, info
 
 ROLLING_ENV = RollingEnv()
