@@ -1,0 +1,19 @@
+#frpc配置
+#此处应将0.0.0.0替换成服务器ip
+serverAddr = "IP"
+serverPort = serverPort
+auth.method = "token"
+auth.token = "your_token"
+# transport.tls.enable = true
+#以下是代理配置
+[[proxies]]
+#代理配置名称
+name = $nodeName
+#代理类型
+type = "tcp"
+#代理本地ip
+localIP = "127.0.0.1"
+#代理本地端口
+localPort = localPort
+#代理远程端口
+remotePort = $remotePort
