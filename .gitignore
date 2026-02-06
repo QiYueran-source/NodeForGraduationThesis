@@ -22,3 +22,11 @@ help/
 # ide配置 
 .vscode/  
 .cursor/  
+
+# 日志
+logs/*
+!logs/test.log  
+
+# 数据
+data/*
+!data/README.md

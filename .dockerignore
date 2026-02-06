@@ -1,0 +1,5 @@
+logs/*
+!logs/test.log  
+
+data/*
+!data/README.md
