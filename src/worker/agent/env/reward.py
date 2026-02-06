@@ -304,7 +304,7 @@ class RewardManager:
 
         # 计算奖励（按固定顺序取权重，与 normalized_performance 一一对应）
         if len(normalized_performance) != 4:
-            logger.warning("normalized_performance 长度非 4: %s", key)
+            logger.warning(f"normalized_performance 长度非 4: {key}")
             return 0.0
         weight_list = [self._reward_weights.get(k, 0.0) for k in ('rtr', 'vol', 'sharpe', 'max_drawdown')]
         reward = sum(w * r for w, r in zip(normalized_performance, weight_list))

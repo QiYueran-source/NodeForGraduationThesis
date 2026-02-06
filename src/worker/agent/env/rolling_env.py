@@ -62,6 +62,10 @@ class RollingEnv(gym.Env):
         对一个portfolio的决策视为一局游戏  
         重置，会获取当前窗口的下一个portfolio，并返回其观测  
         如果已经用完，会自动rolling  
+
+        输出：
+        - obs: 观测
+        - info: 信息
         """
         if seed is None:
             seed = self.seed
@@ -71,12 +75,17 @@ class RollingEnv(gym.Env):
         # 获取当前窗口的下一个 portfolio
         next_portfolio = AGENT_DATA_ADAPTER.win_get_a_portfolio()
         if len(next_portfolio) == 0:
-            AGENT_DATA_ADAPTER.win_roll()
-            next_portfolio = AGENT_DATA_ADAPTER.win_get_a_portfolio()
+            logger.info(f" {AGENT_DATA_ADAPTER.win_get_current_year_month()} 窗口没有可用的portfolio，滚动窗口")
+            
+            # 滚动窗口
+            rolling = AGENT_DATA_ADAPTER.win_roll()
 
-            if len(next_portfolio) == 0:
-                logger.warning("没有可用的portfolio，返回zero_obs")
-                self._pending_portfolio = None
+            # 获取下一个portfolio
+            next_portfolio = AGENT_DATA_ADAPTER.win_get_a_portfolio()
+            
+            # 滚动窗口失败
+            if not rolling or len(next_portfolio) == 0:
+                logger.warning(f" {AGENT_DATA_ADAPTER.win_get_current_year_month()} 已经到达结束窗口/没有可用的portfolio，返回zero_obs")
                 info = {"msg": "no pending portfolio", "no_more_episodes": True}
                 return self._zero_obs, info
 
@@ -86,6 +95,7 @@ class RollingEnv(gym.Env):
         # 获取年月
         year, month = AGENT_DATA_ADAPTER.win_get_current_year_month()
         info = {"year": year, "month": month, "msg": "success"}
+        logger.debug(f"reset 返回 obs, year={year}, month={month}, portfolio={self._pending_portfolio}")
 
         return obs, info
 
@@ -93,6 +103,7 @@ class RollingEnv(gym.Env):
         """
         输入：
         - action: 动作，(n+1)维的权重向量，和为1
+
         输出：
         - next_obs: 占位零观测（本局结束）
         - reward: 奖励，在线计算
@@ -130,7 +141,9 @@ class RollingEnv(gym.Env):
             reward = 0.0
 
         info = {"year": year, "month": month, "msg": "success"}
+        logger.debug(f"step 完成, reward={reward:.4f}, year={year}, month={month}")
         self._pending_portfolio = None
+
         return self._zero_obs, reward, True, False, info
 
 ROLLING_ENV = RollingEnv()

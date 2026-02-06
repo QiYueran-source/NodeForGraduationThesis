@@ -43,7 +43,7 @@ def _read_record_json(task_id):
         with open(path, 'r', encoding='utf-8') as f:
             return json.load(f)
     except Exception as e:
-        logger.debug("读取 record.json 失败: %s", e)
+        logger.debug(f"读取 record.json 失败: {e}")
         return None
 
 
@@ -58,7 +58,7 @@ def handle_message(message_str: str, socket_client: socket):
     try:
         message = json.loads(message_str)
     except json.JSONDecodeError as e:
-        logger.error("JSON解析失败: %s", e)
+        logger.error(f"JSON解析失败: {e}")
         return {"error": f"JSON解析失败: {e}"}
 
     req = int(message.pop('req'))
@@ -69,7 +69,7 @@ def handle_message(message_str: str, socket_client: socket):
             try:
                 os.kill(_worker_pid, signal.SIGTERM)
             except OSError as e:
-                logger.warning("发送 SIGTERM 失败: %s", e)
+                logger.warning(f"发送 SIGTERM 失败: {e}")
         _worker_pid = None
         return {"stop": "success"}
 
@@ -122,11 +122,11 @@ def handle_message(message_str: str, socket_client: socket):
             "--performance_config", json.dumps(meta["performance_config"], ensure_ascii=False),
             "--env_config", json.dumps(meta["env_config"], ensure_ascii=False),
         ]
-        logger.info("启动 worker: python worker.py --task_id %s ...", task_id)
+        logger.info(f"启动 worker: python worker.py --task_id {task_id} ...")
         try:
             proc = subprocess.Popen(cmd)
         except Exception as e:
-            logger.error("启动 worker 失败: %s", e)
+            logger.error(f"启动 worker 失败: {e}")
             return {"error": f"start failed: {e}"}
 
         _worker_pid = proc.pid
@@ -140,7 +140,7 @@ def handle_message(message_str: str, socket_client: socket):
         return response
 
     else:
-        logger.error("req 取值错误: %s", req)
+        logger.error(f"req 取值错误: {req}")
         return {"error": f"req字段取值错误: {req}"}
 
 
@@ -153,21 +153,21 @@ def main():
     try:
         server_socket.bind((host, port))
         server_socket.listen(5)
-        logger.info("TCP 服务器启动，监听 %s:%s", host, port)
+        logger.info(f"TCP 服务器启动，监听 {host}:{port}")
         logger.info("等待连接和消息...")
 
         while True:
             client_socket, client_address = server_socket.accept()
-            logger.info("收到来自 %s 的连接", client_address)
+            logger.info(f"收到来自 {client_address} 的连接")
             try:
                 data = client_socket.recv(1024)
                 if data:
                     message_str = data.decode('utf-8', errors='strict').strip()
                     response = handle_message(message_str, client_socket)
-                    logger.info("返回响应: %s", response)
+                    logger.info(f"返回响应: {response}")
                     client_socket.sendall(json.dumps(response).encode('utf-8'))
             except Exception as e:
-                logger.error("处理连接时出错: %s", e)
+                logger.error(f"处理连接时出错: {e}")
             finally:
                 client_socket.close()
                 logger.info("连接已关闭\n")
@@ -175,7 +175,7 @@ def main():
     except KeyboardInterrupt:
         logger.info("服务器关闭")
     except Exception as e:
-        logger.error("服务器错误: %s", e)
+        logger.error(f"服务器错误: {e}")
         sys.exit(1)
     finally:
         server_socket.close()

@@ -48,8 +48,7 @@ class DataMonitor:
             raise Exception("未设置开始年份")
         # 初始化当前窗口为 start_year 年 1 月
         DATA_CACHE_POOL.put_current_year_month(self.now_year, 1)
-        logger.debug("_load_config 完成: start_year=%s, check_interval=%s, min_year=%s, max_year=%s",
-                    self.now_year, self._config.get('check_interval'), self._config.get('min_year'), self._config.get('max_year'))
+        logger.debug(f"_load_config 完成: start_year={self.now_year}, check_interval={self._config.get('check_interval')}, min_year={self._config.get('min_year')}, max_year={self._config.get('max_year')}")
 
     def monitor_loop(self):
         """
@@ -93,16 +92,16 @@ class DataMonitor:
 
         if years <= min_year:
             need_load_years = max_year - years
-            logger.info("年份数量不足，需要加载数据: years=%d <= min_year=%d, 将加载 %d 年", years, min_year, need_load_years)
+            logger.info(f"年份数量不足，需要加载数据: years={years} <= min_year={min_year}, 将加载 {need_load_years} 年")
             for year in range(now_year + 1, now_year + need_load_years + 1):
-                logger.debug("开始从 loader 拉取 year=%d", year)
+                logger.debug(f"开始从 loader 拉取 year={year}")
                 data = DATA_LOADER.fetch_data(year)
-                logger.debug("loader 返回 year=%d 条数=%d", year, len(data))
+                logger.debug(f"loader 返回 year={year} 条数={len(data)}")
                 items = [{'code': code, 'year': year, 'month': month, 'data': data} for (month, code), data in data.items()]
                 DATA_CACHE_POOL.batch_put_train(items)
                 self.now_year = year
                 DATA_CACHE_POOL.put_current_year_month(year, 12)
-                logger.info("数据已写入缓存池: year=%d, 条数=%d, 当前窗口=(%d, 12)", year, len(items), year)  
+                logger.info(f"数据已写入缓存池: year={year}, 条数={len(items)}, 当前窗口=({year}, 12)")  
 
     def start(self):
         """

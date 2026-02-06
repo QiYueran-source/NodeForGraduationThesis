@@ -17,10 +17,12 @@ meta：由主机提供，结构见下。约定：顶层 = 固定（环境统一�
 - n: 一个组合中的证券数量（算上现金，共n+1个证券）
 - max_portfolios_num: 对于总共n个证券，最多可构建组合数上限
 - env_config: 环境配置
-    - rf_end_year: 强化学习结束年份(后续年份不再学习但继续计算)，月份默认12
+    - rl_end_year: 强化学习结束年份(后续年份不再学习但继续计算)，月份默认12
+    - save_every_n_steps: 每多少步保存一次模型
 - performance_config: 表现计算配置
     - risk_free_rate: 无风险利率
     - rolling_window: 滚动窗口期数
+    - std_window: 标准化窗口期数
 【train_config = 随机】
 - seed: 随机种子
 - m: 回看的期数
@@ -117,9 +119,9 @@ class DataCachePool:
         
         with self._lock:
             if key in self._cache:
-                logger.warning("数据已存在，将被覆盖: %s, %s, %s", code, year, month)
+                logger.warning(f"数据已存在，将被覆盖: {code}, {year}, {month}")
             self._cache[key] = data
-            logger.debug("数据已放入缓存: %s, %s, %s", code, year, month)
+            logger.debug(f"数据已放入缓存: {code}, {year}, {month}")
     
     def batch_put_train(self, items: List[Dict[str, Any]]):
         """
@@ -135,17 +137,17 @@ class DataCachePool:
                 data = item.get('data')
                 
                 if not all([code, year, month, data is not None]):
-                    logger.warning("批量插入项格式错误，跳过: %s", item)
+                    logger.warning(f"批量插入项格式错误，跳过: {item}")
                     continue
                 
                 key = (code, year, month)
                 if key in self._cache:
-                    logger.debug("批量插入：数据已存在，将被覆盖: %s, %s, %s", code, year, month)
+                    logger.debug(f"批量插入：数据已存在，将被覆盖: {code}, {year}, {month}")
                 
                 self._cache[key] = data
                 count += 1
             
-            logger.info("批量插入完成，共插入 %d 条数据", count)
+            logger.info(f"批量插入完成，共插入 {count} 条数据")
     
     def get_train(self, code: str, year: int, month: int) -> Optional[Any]:
         """
@@ -160,10 +162,10 @@ class DataCachePool:
         with self._lock:
             if key in self._cache:
                 data = self._cache.pop(key)  # 获取并删除
-                logger.debug("数据已从缓存取出并删除: %s, %s, %s", code, year, month)
+                logger.debug(f"数据已从缓存取出并删除: {code}, {year}, {month}")
                 return data
             else:
-                logger.debug("缓存中不存在: %s, %s, %s", code, year, month)
+                logger.debug(f"缓存中不存在: {code}, {year}, {month}")
                 return None
     
     def contains_train(self, year: int, month: Optional[int] = None, code: Optional[str] = None) -> bool:
@@ -325,7 +327,7 @@ class DataCachePool:
             return self._meta.get('performance_config')
     
     def get_end_year(self) -> Optional[int]:
-        """获取结束年月"""
+        """获取结束年"""
         with self._meta_lock:
             return self._meta.get('end_year')
     

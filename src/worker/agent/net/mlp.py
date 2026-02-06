@@ -39,3 +39,9 @@ class MLP(nn.Module):
         out = self.linear(x)
         out = self.activation(out)
         return torch.softmax(out, dim=-1)
+
+    def backward(self, loss: torch.Tensor):
+        """
+        反向传播
+        """
+        

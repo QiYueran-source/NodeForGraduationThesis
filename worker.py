@@ -66,14 +66,14 @@ def parse_args_and_load_pool():
 try:
     parse_args_and_load_pool()
 except Exception as e:
-    logger.error("解析参数失败: %s", e)
+    logger.error(f"解析参数失败: {e}")
     sys.exit(1)
 
 
 # 其他组件
 from src.worker.data import data_thread  # 数据线程
 from src.worker.save import SAVER  # 保存器
-from src.worker.agent import AGENT_DATA_ADAPTER, NET_ADAPTER, ROLLING_ENV  # 数据适配器
+from src.worker.agent import AGENT_DATA_ADAPTER, NET_ADAPTER, RL_ADAPTER, ROLLING_ENV  # agent组件 
 
 def start():
     # 设置运行状态
@@ -93,14 +93,61 @@ def start():
 
 def train():
     """使用NET_ADAPTER,ENV和RL_ADAPTER进行训练"""
-    
-    
-    
+    logger.info("开始强化学习训练")
+    try:
+        RL_ADAPTER.train()
+        logger.info("强化学习训练结束，进入预测阶段")
+    except Exception:
+        logger.exception("强化学习训练失败")
+        sys.exit(1)
+
+    # 使用模型继续预测，直到end_year或收到停止信号
+    logger.info("开始滚动预测")
+    _save_cursor = 0
+    while DATA_CACHE_POOL.get_running():
+        ym = DATA_CACHE_POOL.get_current_year_month()
+        if ym is None:
+            logger.warning("当前窗口未设置，结束预测")
+            break
+        year, month = ym
+
+        # 结束条件
+        if year > DATA_CACHE_POOL.get_end_year():
+            logger.info(f"预测阶段结束(已到end_year), year={year}")
+            SAVER.save_record()
+            SAVER.append_performance_and_reward_snapshot()
+            break
+
+        # 预测
+        obs, info = ROLLING_ENV.reset()
+
+        # 没有可用的portfolio
+        if info.get("no_more_episodes"):
+            logger.info("预测阶段结束(no_more_episodes)")
+            break
+
+        # 行动
+        try:
+            action, _ = RL_ADAPTER.algorithm.predict(obs, deterministic=True)
+            next_obs, reward, done, truncated, info = ROLLING_ENV.step(action)
+        except Exception:
+            logger.exception("行动失败，跳过当前组合")
+            continue
+
+        # 保存结果
+        _save_cursor += 1
+        if _save_cursor % 50 == 0 and _save_cursor >= 50:
+            SAVER.save_record()
+        if _save_cursor % 300 == 0 and _save_cursor >= 300:
+            SAVER.append_performance_and_reward_snapshot()
+            _save_cursor = 0
+        
+        
 def stop():
     # 保存
     SAVER.append_performance_and_reward_snapshot()  # 最后一次落盘
     SAVER.save_model()  # 保存模型
-    SAVER.save_status()  # 保存状态（异步写 record.json）
+    SAVER.save_record()  # 保存状态（异步写 record.json）
 
     # 停止
     data_thread.data_thread_stop()
@@ -114,12 +161,12 @@ def stop():
 if __name__ == "__main__":
     try:
         logger.info("===========worker启动===========")
-        logger.info("task_id: %s", DATA_CACHE_POOL.get_task_id())
-        logger.info("start_year: %s", DATA_CACHE_POOL.get_start_year())
-        logger.info("N: %s", DATA_CACHE_POOL.get_N())
-        logger.info("stock_list: %s", DATA_CACHE_POOL.get_stock_list())
-        logger.info("earliest_year_month: %s", DATA_CACHE_POOL.get_earliest_year_month())
-        logger.info("train_config: %s", DATA_CACHE_POOL.get_train_config())
+        logger.info(f"task_id: {DATA_CACHE_POOL.get_task_id()}")
+        logger.info(f"start_year: {DATA_CACHE_POOL.get_start_year()}")
+        logger.info(f"N: {DATA_CACHE_POOL.get_N()}")
+        logger.info(f"stock_list: {DATA_CACHE_POOL.get_stock_list()}")
+        logger.info(f"earliest_year_month: {DATA_CACHE_POOL.get_earliest_year_month()}")
+        logger.info(f"train_config: {DATA_CACHE_POOL.get_train_config()}")
         
         print(DATA_CACHE_POOL.get_meta()) # 调试一下  
         

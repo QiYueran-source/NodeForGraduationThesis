@@ -71,7 +71,6 @@ class NetAdapter:
             raise 
         return self.model(obs)
 
-
     def get_checkpoint(self) -> dict:
         """
         返回可供 safetensors 保存的 state_dict（键为 str，值为 CPU 上的 Tensor）。
@@ -79,5 +78,23 @@ class NetAdapter:
         """
         state_dict = self.model.state_dict()
         return {k: v.cpu().clone() for k, v in state_dict.items()}
+    
+    @property
+    def model(self)->torch.nn.Module:
+        """
+        返回模型
+        """
+        return self.model
+
+    def __call__(self, obs:torch.Tensor)->torch.Tensor:
+        """
+        调用模型，返回动作  
+        输入：  
+        obs: 观测(m,n,mask_len)维度tensor     
+        输出： 
+        - action: 动作，(n+1)维的权重向量，和为1    
+        """
+        return self.model(obs)
+    
 
 NET_ADAPTER = NetAdapter()

@@ -259,6 +259,8 @@ class AgentDataAdapter:
             2.cusor = 0
             3.DATA_CACHE_POOL.put_current_year_month(...)
             4.删除 adapter 中最早一期的训练数据（已滚出窗口），保持内存小
+            5.打乱组合顺序，使下一窗口的采样顺序与本月不同，保证多样性  
+            6.返回True
         否则，返回False
         """
         if AgentDataAdapter._year_month_greater((self.end_year, 12), self._current_year_month):

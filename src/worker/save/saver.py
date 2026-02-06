@@ -64,9 +64,9 @@ class Saver:
             with open(record_path, "a", encoding="utf-8") as f:
                 for line in lines:
                     f.write(line + "\n")
-            logger.debug("追加记录快照: %s, 条数=%d", record_path, len(lines))
+            logger.debug(f"追加记录快照: {record_path}, 条数={len(lines)}")
         except Exception as e:
-            logger.error("异步写入 record.jsonl 失败: %s", e)
+            logger.error(f"异步写入 record.jsonl 失败: {e}")
 
     def append_performance_and_reward_snapshot(self):
         """异步保存表现和奖励快照到本地，按 JSONL 追加到 record.jsonl，不阻塞主流程。"""
@@ -90,9 +90,9 @@ class Saver:
         """后台线程：将 state_dict 写入 safetensors 文件。"""
         try:
             save_file(state_dict, out_path)
-            logger.info("模型已保存: %s", out_path)
+            logger.info(f"模型已保存: {out_path}")
         except Exception as e:
-            logger.error("异步保存模型失败: %s", e)
+            logger.error(f"异步保存模型失败: {e}")
 
     def save_model(self):
         """异步保存模型到本地（safetensors），主线程仅做 get_checkpoint，写盘在后台执行，不阻塞。"""
@@ -109,9 +109,9 @@ class Saver:
             with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(payload, f, ensure_ascii=False)
             os.replace(tmp_path, record_path)
-            logger.debug("record.json 已写入: %s", record_path)
+            logger.debug(f"record.json 已写入: {record_path}")
         except Exception as e:
-            logger.error("异步写入 record.json 失败: %s", e)
+            logger.error(f"异步写入 record.json 失败: {e}")
 
     def save_record(self):
         """异步将 task_id、current_year_month、record 写入 record.json（原子写），供 tcp 查询状态，不阻塞。"""
