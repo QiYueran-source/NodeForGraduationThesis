@@ -42,6 +42,8 @@ class RollingEnv(gym.Env):
         self._zero_obs = np.zeros((self.n, self.m, self.mask_len), dtype=np.float32)
         # 当前 obs 对应的组合，下次 step(action) 时用
         self._pending_portfolio = None
+        # 上一期有效决策权重，用于 action 含 NaN 时兜底（模仿上期）
+        self._last_decision_weights = None
 
     def _get_obs(self, portfolio) -> np.ndarray:
         """返回该组合的因子 (n, m, mask_len)，不展平。"""
@@ -126,6 +128,15 @@ class RollingEnv(gym.Env):
             info["reason"] = "invalid_action_length"
             return self._zero_obs, 0.0, True, False, info
 
+        # 兜底：action 含 NaN 时，优先用上一期决策，否则等权重
+        if np.any(np.isnan(action)):
+            if self._last_decision_weights is not None and len(self._last_decision_weights) == self.n + 1:
+                action = np.array(self._last_decision_weights, dtype=np.float64)
+                logger.warning("action 含 NaN，已替换为上一期决策")
+            else:
+                action = np.ones(self.n + 1, dtype=np.float64) / (self.n + 1)
+                logger.warning("action 含 NaN，无上一期决策，已替换为等权重")
+
         action_sum = float(action.sum())
         if action_sum > 1.0 + 1e-3 or action_sum < 1.0 - 1e-3:
             logger.warning("action 和不为1(允许1e-3误差)，进行归一化")
@@ -142,6 +153,9 @@ class RollingEnv(gym.Env):
 
         info = {"year": year, "month": month, "msg": "success"}
         logger.debug(f"step 完成, reward={reward:.4f}, year={year}, month={month}")
+        
+        # 更新上一期决策，供下次 action 含 NaN 时兜底
+        self._last_decision_weights = action
         self._pending_portfolio = None
 
         return self._zero_obs, reward, True, False, info

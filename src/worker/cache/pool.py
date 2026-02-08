@@ -17,8 +17,9 @@ meta：由主机提供，结构见下。约定：顶层 = 固定（环境统一�
 - n: 一个组合中的证券数量（算上现金，共n+1个证券）
 - max_portfolios_num: 对于总共n个证券，最多可构建组合数上限
 - env_config: 环境配置
-    - rl_end_year: 强化学习结束年份(后续年份不再学习但继续计算)，月份默认12
+    - rf_end_year: 强化学习结束年份(后续年份不再学习但继续计算)，月份默认12
     - save_every_n_steps: 每多少步保存一次模型
+    - sample_and_shuffle_seed: 采样与滚窗打乱种子；设后所有容器组合采样顺序、每窗口 shuffle 顺序一致，可复现
 - performance_config: 表现计算配置
     - risk_free_rate: 无风险利率
     - rolling_window: 滚动窗口期数
@@ -35,7 +36,7 @@ record: 由节点维护
 - running: 是否正在运行    
 - current_year_month: 当前窗口(year,month)   
 - pid: 进程号  
- 
+- node_id: 节点id (从 frp 状态文件中获取)  
 """
 
 # 库
@@ -382,5 +383,15 @@ class DataCachePool:
         """设置进程号"""
         with self._record_lock:
             self._record['pid'] = pid
+
+    def get_node_id(self) -> Optional[str]:
+        """获取节点id"""
+        with self._record_lock:
+            return self._record.get('node_id')
+    
+    def put_node_id(self, node_id: str):
+        """设置节点id"""
+        with self._record_lock:
+            self._record['node_id'] = node_id
 # 全局实例  
 DATA_CACHE_POOL = DataCachePool() 

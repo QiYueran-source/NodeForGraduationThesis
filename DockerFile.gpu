@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     iproute2 \
     sudo \
     jq \
+    rsync \
     && rm -rf /var/lib/apt/lists/*
 
 RUN ln -sf /usr/bin/python3.11 /usr/bin/python && \
@@ -39,6 +40,7 @@ COPY . .
 
 RUN chown -R agentuser:agentuser /Node && \
     chmod -R 755 /Node && \
+    chmod 600 /Node/rsync.passwd && \
     chmod +x /Node/scripts/*.sh /Node/frp/frpc
 
 USER agentuser

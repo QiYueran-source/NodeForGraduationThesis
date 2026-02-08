@@ -108,20 +108,24 @@ def handle_message(message_str: str, socket_client: socket):
         task_path.mkdir(parents=True, exist_ok=True)
 
         # meta 新形式：顶层固定（n/max_portfolios_num/performance_config/env_config）+ train_config 仅随机部分
-        cmd = [
-            "python", "worker.py",
-            "--task_id", task_id,
-            "--start_year", str(meta["start_year"]),
-            "--end_year", str(meta["end_year"]),
-            "--N", str(meta["N"]),
-            "--stock_list", json.dumps(meta["stock_list"], ensure_ascii=False),
-            "--earliest_year_month", json.dumps(meta["earliest_year_month"], ensure_ascii=False),
-            "--train_config", json.dumps(meta["train_config"], ensure_ascii=False),
-            "--n", str(meta["n"]),
-            "--max_portfolios_num", str(meta["max_portfolios_num"]),
-            "--performance_config", json.dumps(meta["performance_config"], ensure_ascii=False),
-            "--env_config", json.dumps(meta["env_config"], ensure_ascii=False),
-        ]
+        try:
+            cmd = [
+                "python", "worker.py",
+                "--task_id", task_id,
+                "--start_year", str(meta["start_year"]),
+                "--end_year", str(meta["end_year"]),
+                "--N", str(meta["N"]),
+                "--stock_list", json.dumps(meta["stock_list"], ensure_ascii=False),
+                "--earliest_year_month", json.dumps(meta["earliest_year_month"], ensure_ascii=False),
+                "--train_config", json.dumps(meta["train_config"], ensure_ascii=False),
+                "--n", str(meta["n"]),
+                "--max_portfolios_num", str(meta["max_portfolios_num"]),
+                "--performance_config", json.dumps(meta["performance_config"], ensure_ascii=False),
+                "--env_config", json.dumps(meta["env_config"], ensure_ascii=False),
+            ]
+        except:
+            logger.error(f"创建命令失败:{e}")
+            return {"error": f"创建命令失败: {e}"}
         logger.info(f"启动 worker: python worker.py --task_id {task_id} ...")
         try:
             proc = subprocess.Popen(cmd)

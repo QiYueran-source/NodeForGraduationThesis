@@ -76,10 +76,23 @@ from src.worker.data import data_thread  # 数据线程
 from src.worker.save import SAVER  # 保存器
 from src.worker.agent import AGENT_DATA_ADAPTER, NET_ADAPTER, RL_ADAPTER, ROLLING_ENV  # agent组件 
 
+def read_node_id_from_frp_state():
+    """从 frp 状态文件中获取节点id"""
+    path = Path("/Node/frp/frpc.state")
+    if not path.exists():
+        return None
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith("NODE_NAME="):
+                return line.split("=", 1)[1].strip()
+    return None
+
 def start():
     # 设置运行状态
     DATA_CACHE_POOL.put_running(True)
     DATA_CACHE_POOL.put_pid(os.getpid())
+    DATA_CACHE_POOL.put_node_id(read_node_id_from_frp_state())
 
     # 初始保存meta、record数据
     SAVER.save_meta() # 保存meta数据   
@@ -189,16 +202,19 @@ def send_result():
         
         
 def stop():
+    # 设置运行状态
+    DATA_CACHE_POOL.put_running(False)
+
     # 保存
-    SAVER.append_performance_and_reward_snapshot()  # 最后一次落盘
-    SAVER.save_model()  # 保存模型
-    SAVER.save_record()  # 保存状态（异步写 record.json）
+    SAVER.append_performance_and_reward_snapshot(deamon=False)  # 最后一次落盘
+    SAVER.save_model(deamon=False)  # 保存模型
+    SAVER.save_record(deamon=False)  # 保存状态（异步写 record.json）
+
+    # 等待异步线程完成
+    time.sleep(5)
 
     # 停止
     data_thread.data_thread_stop()
-
-    # 设置运行状态
-    DATA_CACHE_POOL.put_running(False)
 
     logger.debug("数据线程与 record 线程停止完成")
 

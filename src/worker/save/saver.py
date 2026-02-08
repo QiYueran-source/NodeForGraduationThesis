@@ -57,6 +57,7 @@ class Saver:
         meta_path = self._get_base_path() / "meta.json"
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(DATA_CACHE_POOL.get_meta(), f, ensure_ascii=False)
+        
 
     def _write_jsonl_worker(self, record_path: Path, lines: list):
         """后台线程：将已序列化的行追加写入 record.jsonl。"""
@@ -68,8 +69,8 @@ class Saver:
         except Exception as e:
             logger.error(f"异步写入 record.jsonl 失败: {e}")
 
-    def append_performance_and_reward_snapshot(self):
-        """异步保存表现和奖励快照到本地，按 JSONL 追加到 record.jsonl，不阻塞主流程。"""
+    def append_performance_and_reward_snapshot(self, deamon:bool = True):
+        """异步保存表现和奖励快照到本地，按 JSONL 追加到 performance_and_reward.jsonl，不阻塞主流程。"""
         current_ym = DATA_CACHE_POOL.get_current_year_month()
         if not current_ym:
             logger.warning("当前窗口未设置，跳过保存快照")
@@ -78,13 +79,13 @@ class Saver:
         incremental_result = REWARD_MANAGER.get_incremental_snapshot(year, month)
         if not incremental_result:
             return
-        record_path = self._get_base_path() / "record.jsonl"
+        record_path = self._get_base_path() / "performance_and_reward.jsonl"
         lines = []
         for key, data in incremental_result.items():
             y, m, portfolio = key
             obj = {"year": y, "month": m, "portfolio": list(portfolio), "data": self._serialize_perf(data)}
             lines.append(json.dumps(obj, ensure_ascii=False))
-        threading.Thread(target=self._write_jsonl_worker, args=(record_path, lines), daemon=True).start()
+        threading.Thread(target=self._write_jsonl_worker, args=(record_path, lines), daemon=deamon).start() # 不守护，保证落盘陈功
 
     def _write_model_worker(self, state_dict: dict, out_path: str):
         """后台线程：将 state_dict 写入 safetensors 文件。"""
@@ -94,12 +95,12 @@ class Saver:
         except Exception as e:
             logger.error(f"异步保存模型失败: {e}")
 
-    def save_model(self):
+    def save_model(self, deamon:bool = True):
         """异步保存模型到本地（safetensors），主线程仅做 get_checkpoint，写盘在后台执行，不阻塞。"""
         base = self._get_base_path()
         out_path = str(base / "model.safetensors")
         state_dict = NET_ADAPTER.get_checkpoint()
-        threading.Thread(target=self._write_model_worker, args=(state_dict, out_path), daemon=True).start() 
+        threading.Thread(target=self._write_model_worker, args=(state_dict, out_path), daemon=deamon).start() 
 
     def _write_record_worker(self, base: Path, payload: dict):
         """后台线程：将 payload 原子写入 record.json。"""
@@ -113,7 +114,7 @@ class Saver:
         except Exception as e:
             logger.error(f"异步写入 record.json 失败: {e}")
 
-    def save_record(self):
+    def save_record(self, deamon:bool = True):
         """异步将 task_id、current_year_month、record 写入 record.json（原子写），供 tcp 查询状态，不阻塞。"""
         task_id = DATA_CACHE_POOL.get_task_id()
         if not task_id:
@@ -126,7 +127,7 @@ class Saver:
             "current_year_month": list(current_ym) if current_ym else None,
             "record": DATA_CACHE_POOL.get_record(),
         }
-        threading.Thread(target=self._write_record_worker, args=(base, payload), daemon=True).start()
+        threading.Thread(target=self._write_record_worker, args=(base, payload), daemon=deamon).start()
 
     def save_status(self):
         """保存状态到本地（与 save_record 一致，供 worker 停止时调用）"""

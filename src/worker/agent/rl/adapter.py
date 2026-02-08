@@ -17,7 +17,6 @@ from stable_baselines3.common.utils import set_random_seed
 from src.worker.cache.pool import DATA_CACHE_POOL
 from src.worker.agent.env.rolling_env import ROLLING_ENV
 from src.worker.agent.net import NET_ADAPTER
-from src.worker.save.saver import SAVER
 from src.worker.agent.rl.policy import CustomActorCriticPolicy, MLPFeatureExtractor
 
 # 日志
@@ -55,6 +54,8 @@ class CustomCallback(BaseCallback):
         """
         若 current_year > rl_end_year 则返回 False 结束训练；每 save_every_n_steps 步保存一次模型。
         """
+        from src.worker.save.saver import SAVER # 延迟导入，避免循环导入 
+        
         # 首次进入时打一条调试日志
         if self.n_calls == 1:
             logger.debug(f"callback 首次 _on_step, rl_end_year={self.rl_end_year}")
