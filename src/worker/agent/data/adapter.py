@@ -49,10 +49,20 @@ class AgentDataAdapter:
         # 当前窗口
         self._current_year_month = self.earliest_year_month  
 
+        # 采样与 shuffle 种子（env_config.sample_and_shuffle_seed 优先，否则用 train_config.seed 默认 42）
+        env_config = DATA_CACHE_POOL.get_env_config() or {}
+        self._sample_and_shuffle_seed = env_config.get('sample_and_shuffle_seed')
+        self._effective_sample_seed = (
+            self._sample_and_shuffle_seed
+            if self._sample_and_shuffle_seed is not None
+            else self.train_config.get('seed', 42)
+        )
+
         # 加载配置
         self._load_config()
 
-        # 加载股票池
+        # 加载股票池（用有效种子保证采样顺序可复现）
+        random.seed(self._effective_sample_seed)
         self._sample_portfolios()
 
         # 生成掩码
@@ -90,8 +100,8 @@ class AgentDataAdapter:
         factors_list = DATA_CACHE_POOL.get_factors_list() or []
         n = len(factors_list)
         effective_mask_len = min(self.mask_len, n)
-        seed = self.train_config.get('seed')
-        rng = random.Random(seed) if seed is not None else random.Random()
+        seed = self.train_config.get('seed', 42)
+        rng = random.Random(seed)
         indices = list(range(n))
         rng.shuffle(indices)
         self.mask = [0] * n
@@ -265,9 +275,11 @@ class AgentDataAdapter:
         """
         if AgentDataAdapter._year_month_greater((self.end_year, 12), self._current_year_month):
             self._current_year_month = self._roll_year_month(self._current_year_month, 1)
-            # 打乱组合顺序，使下一窗口的采样顺序与本月不同，保证多样性
+            # 打乱组合顺序，使下一窗口的采样顺序与本月不同，保证多样性（用有效种子可复现）
             with self._portfolio_pool_lock:
-                random.shuffle(self._portfolio_pool)
+                ym_int = self._current_year_month[0] * 12 + self._current_year_month[1]
+                shuffle_seed = self._effective_sample_seed + ym_int
+                random.Random(shuffle_seed).shuffle(self._portfolio_pool)
                 self._portfolio_cursor = 0
             DATA_CACHE_POOL.put_current_year_month(self._current_year_month[0], self._current_year_month[1])
 

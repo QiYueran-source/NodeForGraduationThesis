@@ -17,8 +17,8 @@ logger = get_module_logger(__name__, prefix='[NetAdapter]')
 
 class NetAdapter:
     def __init__(self):
-        # 模型
-        self.model:torch.nn.Module = None
+        # 模型（内部用 _model，对外通过 property model 只读访问）
+        self._model: torch.nn.Module = None
 
         # 加载配置
         tc = DATA_CACHE_POOL.get_train_config() or {}
@@ -34,8 +34,10 @@ class NetAdapter:
         self.dropout = self.model_config.get('dropout', 0)
         self.config = self.model_config.get('config', {})
 
-        # 设置随机种子
+        # 设置随机种子（CPU + GPU，保证可复现）
         torch.manual_seed(self.seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(self.seed)
         
         # 获取模型
         self._set_model()
@@ -49,7 +51,7 @@ class NetAdapter:
         - 0: mlp1
         """
         if self.cate == 0:
-            self.model = MLP(self.n, self.m, self.mask_len, self.dropout, **self.config)
+            self._model = MLP(self.n, self.m, self.mask_len, self.dropout, **self.config)
         else:
             raise
 
@@ -57,7 +59,7 @@ class NetAdapter:
         """
         将模型移动到 self.device（有 GPU 则 cuda，否则 cpu，自动决定）
         """
-        self.model.to(self.device)
+        self._model.to(self.device)
         if self.device.type == 'cuda':
             logger.info("使用cuda")
 
@@ -69,22 +71,20 @@ class NetAdapter:
         if obs.dim() != 3 or obs.shape[0] != self.m or obs.shape[1] != self.m or obs.shape[2] != self.mask_len:
             logger.error(f"观测维度错误，期望{(self.m,self.n,self.mask_len)}，实际{obs.shape}")
             raise 
-        return self.model(obs)
+        return self._model(obs)
 
     def get_checkpoint(self) -> dict:
         """
         返回可供 safetensors 保存的 state_dict（键为 str，值为 CPU 上的 Tensor）。
         SAVER 可直接用 safetensors.torch.save_file(get_checkpoint(), path) 保存。
         """
-        state_dict = self.model.state_dict()
+        state_dict = self._model.state_dict()
         return {k: v.cpu().clone() for k, v in state_dict.items()}
     
     @property
-    def model(self)->torch.nn.Module:
-        """
-        返回模型
-        """
-        return self.model
+    def model(self) -> torch.nn.Module:
+        """返回模型（只读）。"""
+        return self._model
 
     def __call__(self, obs:torch.Tensor)->torch.Tensor:
         """
@@ -94,7 +94,7 @@ class NetAdapter:
         输出： 
         - action: 动作，(n+1)维的权重向量，和为1    
         """
-        return self.model(obs)
+        return self._model(obs)
     
 
 NET_ADAPTER = NetAdapter()
