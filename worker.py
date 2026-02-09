@@ -112,8 +112,10 @@ def train():
         RL_ADAPTER.train()
         logger.info("强化学习训练结束，进入预测阶段")
     except Exception:
-        logger.exception("强化学习训练失败")
-        sys.exit(1)
+        logger.exception("强化学习训练失败，保存当前状态后继续滚动预测")
+        SAVER.save_record()
+        SAVER.append_performance_and_reward_snapshot()
+        SAVER.save_model()
 
     # 使用模型继续预测，直到end_year或收到停止信号
     logger.info("开始滚动预测")
