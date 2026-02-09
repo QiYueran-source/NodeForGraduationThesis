@@ -186,7 +186,9 @@ class RewardManager:
         
         # 获取滚动窗口期收益率序列（从当前期rtr开始，往前rolling_window期）
         portfolio_return_series_for_rolling = [rtr]
-        for i in range(1,self._performance_config.get('rolling_window', 24)):
+        failed_periods = []
+        rolling_window = self._performance_config.get('rolling_window', 24)
+        for i in range(1, rolling_window):
             y, m = AGENT_DATA_ADAPTER._roll_year_month((year, month), -i)
             past = self._record.get((y, m, portfolio), {})
             perf = past.get('performance')
@@ -194,7 +196,12 @@ class RewardManager:
             if rtr is not None:
                 portfolio_return_series_for_rolling.append(rtr)
             else:
-                logger.warning(f"获取收益率序列失败: {y}, {m}, {portfolio}")
+                failed_periods.append((y, m, portfolio))
+        if failed_periods:
+            logger.warning(
+                "获取收益率序列失败: 共 %d 期 (当前 %s %s)，示例: %s",
+                len(failed_periods), year, month, failed_periods[0],
+            )
 
         portfolio_return_series_for_rolling = portfolio_return_series_for_rolling[::-1] # 反转，idx从最早的ym开始  
 
