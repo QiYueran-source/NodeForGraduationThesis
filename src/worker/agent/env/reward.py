@@ -216,7 +216,24 @@ class RewardManager:
         with self._record_lock:
             self._record[key] = record
             logger.debug(f"保存记录: {key}, {record}")
- 
+
+    def get_previous_decision_weights(self, year: int, month: int, portfolio: Tuple) -> Optional[Tuple[float, ...]]:
+        """获取该 portfolio 在上一期（日历上一月）的 decision_weights；若无记录或含 NaN 则返回 None。"""
+        prev_year, prev_month = AGENT_DATA_ADAPTER._roll_year_month((year, month), -1)
+        key = (prev_year, prev_month, portfolio)
+        with self._record_lock:
+            rec = self._record.get(key, {})
+        dw = rec.get("decision_weights")
+        if dw is None:
+            return None
+        dw = tuple(dw) if isinstance(dw, list) else dw
+        if len(dw) != len(portfolio) + 1:
+            return None
+        arr = np.asarray(dw, dtype=np.float64)
+        if np.any(np.isnan(arr)):
+            return None
+        return tuple(float(x) for x in dw)
+
     def normalize_portfolio_performance(self, year:int, month:int, portfolio: Tuple[str]) -> Optional[List[float]]:
         """归一化组合表现（纵向/滚动窗口标准化，便于在线计算奖励）
 

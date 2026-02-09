@@ -89,3 +89,15 @@ class CustomActorCriticPolicy(ActorCriticPolicy):
         self.optimizer = self.optimizer_class(
             self.parameters(), lr=lr_schedule(1), **self.optimizer_kwargs
         )
+
+    def _get_action_dist_from_latent(self, latent_pi: torch.Tensor) -> Any:
+        mean_actions = self.action_net(latent_pi)
+        if torch.isnan(mean_actions).any() or torch.isinf(mean_actions).any():
+            bad = torch.isnan(mean_actions).any(dim=1) | torch.isinf(mean_actions).any(dim=1)
+            bad_idx = bad.nonzero(as_tuple=True)[0].tolist()
+            logger.warning(
+                "mean_actions 含 NaN/Inf, shape=%s, 异常 batch 索引: %s",
+                tuple(mean_actions.shape),
+                bad_idx[:20] if len(bad_idx) > 20 else bad_idx,
+            )
+        return self.action_dist.proba_distribution(mean_actions, self.log_std)
