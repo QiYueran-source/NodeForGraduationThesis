@@ -299,6 +299,10 @@ class RewardManager:
             (portfolio_performance_record[i] - mean_list[i]) / std_list[i]
             for i in range(4)
         ]
+        # 标准化结果若为 NaN/Inf，用 0 填充，避免传播到 reward 与后续期
+        normalized_performance = [
+            float(x) if np.isfinite(x) else 0.0 for x in normalized_performance
+        ]
 
         with self._record_lock:
             self._record[key]['normalized_performance'] = normalized_performance
@@ -331,7 +335,7 @@ class RewardManager:
             logger.warning(f"normalized_performance 长度非 4: {key}")
             return 0.0
         weight_list = [self._reward_weights.get(k, 0.0) for k in ('rtr', 'vol', 'sharpe', 'max_drawdown')]
-        reward = sum(w * r for w, r in zip(normalized_performance, weight_list))
+        reward = sum(w * (r if np.isfinite(r) else 0.0) for w, r in zip(normalized_performance, weight_list))
 
         # 记录
         with self._record_lock:
