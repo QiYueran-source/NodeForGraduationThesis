@@ -211,7 +211,7 @@ def stop():
     SAVER.save_record(deamon=False)  # 保存状态（异步写 record.json）
 
     # 等待异步线程完成
-    time.sleep(5)
+    time.sleep(1.5)
 
     # 停止
     data_thread.data_thread_stop()

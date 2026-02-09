@@ -92,6 +92,16 @@ def handle_message(message_str: str, socket_client: socket):
             response = {"running": 0}
         return response
 
+    elif req == 2:
+        # 调试：返回 TCPReciver 内部状态
+        response = {
+            "debug": True,
+            "_worker_pid": _worker_pid,
+            "_meta": _meta.copy() if _meta else {},
+            "worker_alive": _is_process_alive(_worker_pid) if _worker_pid is not None else False,
+        }
+        return response
+
     elif req == 1:
         # 启动 worker：先检查是否已在跑，再写 run_config.json 并传 task_id
         if _worker_pid and _is_process_alive(_worker_pid):
