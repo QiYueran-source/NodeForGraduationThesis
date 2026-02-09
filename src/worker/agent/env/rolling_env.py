@@ -143,10 +143,19 @@ class RollingEnv(gym.Env):
             action = np.ones(self.n + 1, dtype=np.float64) / (self.n + 1)
             logger.warning("action 含 NaN，已替换为等权重")
 
+        # 用 softmax 归一化，避免 action_sum 为 0 或 NaN 时除零；极端情况 fallback 等权
+        action = np.asarray(action, dtype=np.float64)
         action_sum = float(action.sum())
-        if action_sum > 1.0 + 1e-3 or action_sum < 1.0 - 1e-3:
-            logger.warning("action 和不为1(允许1e-3误差)，进行归一化")
-            action = action / action_sum
+        if action_sum > 1.0 + 1e-3 or action_sum < 1.0 - 1e-3 or not np.isfinite(action_sum):
+            logger.warning("action 和不为1或非有限，进行 softmax 归一化")
+            x = np.clip(action, -50.0, 50.0)
+            exp_x = np.exp(x)
+            s = exp_x.sum()
+            if s > 1e-10 and np.isfinite(s):
+                action = exp_x / s
+            else:
+                action = np.ones(self.n + 1, dtype=np.float64) / (self.n + 1)
+                logger.warning("softmax 分母过小或非有限，已替换为等权重")
         action = tuple(action.tolist())
 
         # 计算表现

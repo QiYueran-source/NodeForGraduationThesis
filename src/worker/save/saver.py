@@ -53,6 +53,16 @@ class Saver:
         """将表现 dict 转为 JSON 可序列化（tuple -> list）"""
         return {k: list(v) if isinstance(v, tuple) else v for k, v in data.items()}
 
+    def _round_floats_in(self, obj, ndigits: int):
+        """递归将 dict/list 中的 float 统一保留 ndigits 位小数，便于 JSON 落盘可读。"""
+        if isinstance(obj, dict):
+            return {k: self._round_floats_in(v, ndigits) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [self._round_floats_in(v, ndigits) for v in obj]
+        if isinstance(obj, float):
+            return round(obj, ndigits)
+        return obj
+
     def save_meta(self):
         """保存 meta 到本地（结构见 pool.py 顶部：顶层固定 + train_config 随机）"""
         meta_path = self._get_base_path() / "meta.json"
