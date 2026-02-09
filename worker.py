@@ -208,9 +208,9 @@ def stop():
     DATA_CACHE_POOL.put_running(False)
 
     # 保存
-    SAVER.append_performance_and_reward_snapshot(deamon=False)  # 最后一次落盘
-    SAVER.save_model(deamon=False)  # 保存模型
-    SAVER.save_record(deamon=False)  # 保存状态（异步写 record.json）
+    SAVER.append_performance_and_reward_snapshot(daemon=False)  # 最后一次落盘
+    SAVER.save_model(daemon=False)  # 保存模型
+    SAVER.save_record(daemon=False)  # 保存状态（异步写 record.json）
 
     # 等待异步线程完成
     time.sleep(1.5)
