@@ -4,6 +4,7 @@
 """
 
 # 库
+import math
 import yaml
 import os
 import json
@@ -84,6 +85,7 @@ class Saver:
         for key, data in incremental_result.items():
             y, m, portfolio = key
             obj = {"year": y, "month": m, "portfolio": list(portfolio), "data": self._serialize_perf(data)}
+            obj = self._round_floats_in(obj, 3)  # 写入 performance_and_reward.jsonl 前统一 3 位有效数字
             lines.append(json.dumps(obj, ensure_ascii=False))
         threading.Thread(target=self._write_jsonl_worker, args=(record_path, lines), daemon=deamon).start() # 不守护，保证落盘陈功
 
