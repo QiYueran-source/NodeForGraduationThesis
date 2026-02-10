@@ -41,11 +41,11 @@ def parse_args_and_load_pool():
     # 通过redis获取meta数据 
     client = REDIS_CONNECTOR.get_client()
     meta_key = REDIS_PREFIX_MANAGER.build_meta_key()
-    meta = client.get(meta_key)
-    if meta is None:
+    meta_json = client.get(meta_key)
+    if meta_json is None:
         logger.error(f"meta not found in redis")
         sys.exit(1)
-    meta = json.loads(meta)
+    meta = json.loads(meta_json)
     logger.info(f"获取meta数据: {meta}")
 
     # 写入 meta 缓存池（结构见 pool.py 顶部：顶层固定 + train_config 随机；end_month 在 put_end_year 内固定为 12）
@@ -54,12 +54,15 @@ def parse_args_and_load_pool():
     DATA_CACHE_POOL.put_end_year(meta['end_year'])
     DATA_CACHE_POOL.put_N(meta['N'])
     DATA_CACHE_POOL.put_stock_list(meta['stock_list'])
-    DATA_CACHE_POOL.put_earliest_year_month(meta['earliest_year_month'])
+    year, month = meta['earliest_year_month']
+    DATA_CACHE_POOL.put_earliest_year_month(year, month)
     DATA_CACHE_POOL.put_n(meta['n'])
     DATA_CACHE_POOL.put_max_portfolios_num(meta['max_portfolios_num'])
     DATA_CACHE_POOL.put_performance_config(meta['performance_config'])
     DATA_CACHE_POOL.put_env_config(meta['env_config'])
-    DATA_CACHE_POOL.put_train_config(args.train_config)
+    train_config_json = args.train_config
+    train_config = json.loads(train_config_json)
+    DATA_CACHE_POOL.put_train_config(train_config)
 
 try:
     parse_args_and_load_pool()

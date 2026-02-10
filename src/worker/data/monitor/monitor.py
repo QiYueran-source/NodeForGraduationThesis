@@ -93,8 +93,16 @@ class DataMonitor:
         if years <= min_year:
             need_load_years = max_year - years
             logger.info(f"年份数量不足，需要加载数据: years={years} <= min_year={min_year}, 将加载 {need_load_years} 年")
+
             for year in range(now_year + 1, now_year + need_load_years + 1):
                 logger.debug(f"开始从 loader 拉取 year={year}")
+
+                # 边界判断
+                end_year = DATA_CACHE_POOL.get_end_year() or 2024 
+                if year > end_year:
+                    logger.info(f"已到达结束年份，停止加载: year={year} > end_year={end_year}")
+                    break
+
                 data = DATA_LOADER.fetch_data(year)
                 logger.debug(f"loader 返回 year={year} 条数={len(data)}")
                 items = [{'code': code, 'year': year, 'month': month, 'data': data} for (month, code), data in data.items()]

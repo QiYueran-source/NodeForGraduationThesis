@@ -22,6 +22,21 @@ logger = get_module_logger(__name__, 'TCPReciver')
 _worker_pid = None
 _meta = {}  # 含 task_id 等，用于 status 时拼 record.json 路径
 
+def _cleanup_child(signum, frame):
+    """清理已结束的子进程，避免僵尸进程"""
+    try:
+        while True:
+            # 使用 WNOHANG 选项，非阻塞等待
+            pid, status = os.waitpid(-1, os.WNOHANG)
+            if pid == 0:
+                break  # 没有更多子进程需要清理
+            logger.debug(f"清理子进程: PID={pid}, 退出状态={status}")
+    except OSError:
+        # 没有子进程需要等待
+        pass
+
+# 设置 SIGCHLD 信号处理器，结束后清理子进程，避免僵尸进程  
+signal.signal(signal.SIGCHLD, _cleanup_child)
 
 def _is_process_alive(pid):
     """判断进程是否存活"""
@@ -32,7 +47,6 @@ def _is_process_alive(pid):
         return True
     except OSError:
         return False
-
 
 def _read_record_json(task_id):
     """从 /Node/data/{task_id}/record.json 读取状态，解析失败或文件不存在返回 None"""
@@ -71,6 +85,7 @@ def handle_message(message_str: str, socket_client: socket):
             except OSError as e:
                 logger.warning(f"发送 SIGTERM 失败: {e}")
         _worker_pid = None
+        _meta = {} 
         return {"stop": "success"}
 
     elif req == 0:
@@ -89,6 +104,7 @@ def handle_message(message_str: str, socket_client: socket):
             }
         else:
             _worker_pid = None
+            _meta = {} 
             response = {"running": 0}
         return response
 
@@ -163,19 +179,19 @@ def main():
 
         while True:
             client_socket, client_address = server_socket.accept()
-            logger.info(f"收到来自 {client_address} 的连接")
+            logger.debug(f"收到来自 {client_address} 的连接")
             try:
                 data = client_socket.recv(1024)
                 if data:
                     message_str = data.decode('utf-8', errors='strict').strip()
                     response = handle_message(message_str, client_socket)
-                    logger.info(f"返回响应: {response}")
+                    logger.debug(f"返回响应: {response}")
                     client_socket.sendall(json.dumps(response).encode('utf-8'))
             except Exception as e:
                 logger.error(f"处理连接时出错: {e}")
             finally:
                 client_socket.close()
-                logger.info("连接已关闭\n")
+                logger.debug("连接已关闭\n")
 
     except KeyboardInterrupt:
         logger.info("服务器关闭")
