@@ -3,7 +3,6 @@
 Redis键管理和前缀配置
 基于YAML配置的简单前缀管理系统
 """
-
 import yaml
 from typing import Final, Dict, Optional,Literal
 
@@ -18,8 +17,10 @@ class RedisPrefixManager:
         f"""简化的Redis前缀管理器
         - 项目根前缀: gt project_prefix     
             - 系统前缀: gt:system system_prefix   
+                - 任务id: gt:system:task_id
                 - 消息队列键: gt:system:Q message_bus_queue_key   
                 - 节点总信息前缀: gt:system:node_info
+                - 元数据前缀: gt:system:meta
             - 数据前缀: gt:data   
                 - raw数据框df前缀: gt:data:df:{{year}}
                     - 因子df：gt:data:df:{{year}}:factors_df   
@@ -31,7 +32,9 @@ class RedisPrefixManager:
         self._project_prefix = 'gt'
         self._system_prefix = 'system'
         self._node_info_prefix = 'node_info'
+        self._task_id_prefix = 'task_id'
         self._data_prefix = 'data'
+        self._meta_prefix = 'meta'
         self._init_data_prefix = 'init'
         self._load_data_prefix = 'load'
         self._train_data_prefix = 'train'
@@ -101,6 +104,22 @@ class RedisPrefixManager:
         例如: gt:system:node_info
         """
         return ":".join([self.system_prefix, self._node_info_prefix])
+
+    ## 构建ID键
+    def build_task_id_key(self) -> str:
+        """
+        构建task_id键  
+        例如 gt:system:task_id
+        """
+        return ":".join([self.system_prefix, self._task_id_prefix])
+
+    ## 构建元数据键
+    def build_meta_key(self) -> str:
+        """
+        构建元数据键
+        例如: gt:system:meta
+        """
+        return ":".join([self.system_prefix, self._meta_prefix])
 
     ## 构建数据框键
     def build_df_key(self, 

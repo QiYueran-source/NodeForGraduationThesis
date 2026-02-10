@@ -107,33 +107,24 @@ def handle_message(message_str: str, socket_client: socket):
         if _worker_pid and _is_process_alive(_worker_pid):
             return {"error": "already running"}
 
-        meta = message.pop('meta')
-        task_id = meta.pop('task_id')
+        train_config = message.pop('train_config')
+        task_id = message.get('task_id')  # 从 message 中获取 task_id
 
+        # 创建文件夹 
+        task_id = message.get('task_id')
         data_dir = Path('/Node/data')
         task_path = data_dir / task_id
         if task_path.exists():
             return {"error": "task_id already exists"}
-
         task_path.mkdir(parents=True, exist_ok=True)
 
         # meta 新形式：顶层固定（n/max_portfolios_num/performance_config/env_config）+ train_config 仅随机部分
         try:
             cmd = [
                 "python", "worker.py",
-                "--task_id", task_id,
-                "--start_year", str(meta["start_year"]),
-                "--end_year", str(meta["end_year"]),
-                "--N", str(meta["N"]),
-                "--stock_list", json.dumps(meta["stock_list"], ensure_ascii=False),
-                "--earliest_year_month", json.dumps(meta["earliest_year_month"], ensure_ascii=False),
-                "--train_config", json.dumps(meta["train_config"], ensure_ascii=False),
-                "--n", str(meta["n"]),
-                "--max_portfolios_num", str(meta["max_portfolios_num"]),
-                "--performance_config", json.dumps(meta["performance_config"], ensure_ascii=False),
-                "--env_config", json.dumps(meta["env_config"], ensure_ascii=False),
+                "--train_config", json.dumps(train_config, ensure_ascii=False),
             ]
-        except:
+        except Exception as e:
             logger.error(f"创建命令失败:{e}")
             return {"error": f"创建命令失败: {e}"}
         logger.info(f"启动 worker: python worker.py --task_id {task_id} ...")

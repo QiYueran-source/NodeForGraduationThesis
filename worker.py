@@ -19,6 +19,9 @@ import subprocess
 from pathlib import Path
 import torch
 
+# 自定义组件
+from src.worker.data.redis import REDIS_CONNECTOR,REDIS_PREFIX_MANAGER
+
 # 日志
 from src.utils.logger import get_module_logger
 logger = get_module_logger(__name__, prefix='[main]')
@@ -31,38 +34,32 @@ def parse_args_and_load_pool():
     list/dict 类参数以 JSON 字符串传入，此处解析；earliest_year_month 转为 tuple。
     """
     parser = argparse.ArgumentParser(description='worker')
-    parser.add_argument('--task_id', required=True, help='任务 id')
-    parser.add_argument('--start_year', type=int, required=True)
-    parser.add_argument('--end_year', type=int, required=True)
-    parser.add_argument('--N', type=int, required=True)
-    parser.add_argument('--stock_list', required=True, help='JSON 数组字符串，如 ["a","b"]')
-    parser.add_argument('--earliest_year_month', required=True, help='JSON 数组 [year, month]')
     parser.add_argument('--train_config', required=True, help='JSON 对象字符串（仅随机部分，结构见 pool.py 顶部）')
-    parser.add_argument('--n', type=int, required=True, help='一个组合中的证券数量（固定，顶层）')
-    parser.add_argument('--max_portfolios_num', type=int, required=True, help='可构建组合数上限（固定，顶层）')
-    parser.add_argument('--performance_config', required=True, help='JSON 对象，表现计算配置（固定，顶层）')
-    parser.add_argument('--env_config', required=True, help='JSON 对象，环境配置（固定，顶层）')
 
     args = parser.parse_args()
 
-    stock_list = json.loads(args.stock_list)
-    earliest = json.loads(args.earliest_year_month)
-    if isinstance(earliest, list):
-        earliest = tuple(earliest)
-    train_config = json.loads(args.train_config)
+    # 通过redis获取meta数据 
+    client = REDIS_CONNECTOR.get_client()
+    meta_key = REDIS_PREFIX_MANAGER.build_meta_key()
+    meta = client.get(meta_key)
+    if meta is None:
+        logger.error(f"meta not found in redis")
+        sys.exit(1)
+    meta = json.loads(meta)
+    logger.info(f"获取meta数据: {meta}")
 
     # 写入 meta 缓存池（结构见 pool.py 顶部：顶层固定 + train_config 随机；end_month 在 put_end_year 内固定为 12）
-    DATA_CACHE_POOL.put_task_id(args.task_id)
-    DATA_CACHE_POOL.put_start_year(args.start_year)
-    DATA_CACHE_POOL.put_end_year(args.end_year)
-    DATA_CACHE_POOL.put_N(args.N)
-    DATA_CACHE_POOL.put_stock_list(stock_list)
-    DATA_CACHE_POOL.put_earliest_year_month(*earliest)
-    DATA_CACHE_POOL.put_n(args.n)
-    DATA_CACHE_POOL.put_max_portfolios_num(args.max_portfolios_num)
-    DATA_CACHE_POOL.put_performance_config(json.loads(args.performance_config))
-    DATA_CACHE_POOL.put_env_config(json.loads(args.env_config))
-    DATA_CACHE_POOL.put_train_config(train_config)
+    DATA_CACHE_POOL.put_task_id(meta['task_id'])
+    DATA_CACHE_POOL.put_start_year(meta['start_year'])
+    DATA_CACHE_POOL.put_end_year(meta['end_year'])
+    DATA_CACHE_POOL.put_N(meta['N'])
+    DATA_CACHE_POOL.put_stock_list(meta['stock_list'])
+    DATA_CACHE_POOL.put_earliest_year_month(meta['earliest_year_month'])
+    DATA_CACHE_POOL.put_n(meta['n'])
+    DATA_CACHE_POOL.put_max_portfolios_num(meta['max_portfolios_num'])
+    DATA_CACHE_POOL.put_performance_config(meta['performance_config'])
+    DATA_CACHE_POOL.put_env_config(meta['env_config'])
+    DATA_CACHE_POOL.put_train_config(args.train_config)
 
 try:
     parse_args_and_load_pool()
@@ -158,19 +155,6 @@ def train():
             SAVER.append_performance_and_reward_snapshot()
             _save_cursor = 0
 
-def _read_node_id_from_frp_state(state_path: str = "/Node/frp/frpc.state") -> str | None:
-    """从 frpc.state 解析 NODE_NAME 作为 node_id，文件不存在或未包含 NODE_NAME 时返回 None。"""
-    path = Path(state_path)
-    if not path.exists():
-        return None
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line.startswith("NODE_NAME="):
-                return line.split("=", 1)[1].strip()
-    return None
-
-
 def send_result():
     """发送结果到主机（调用 rsync 脚本，需 task_id 与 frpc.state 中的 NODE_NAME）。"""
     logger.info("开始发送结果到主机")
@@ -179,7 +163,7 @@ def send_result():
         if not task_id:
             logger.warning("task_id 为空，跳过发送结果")
             return
-        node_id = _read_node_id_from_frp_state()
+        node_id = read_node_id_from_frp_state()
         if not node_id:
             logger.warning("未从 frpc.state 读取到 NODE_NAME，跳过发送结果")
             return
@@ -230,9 +214,7 @@ if __name__ == "__main__":
         logger.info(f"stock_list: {DATA_CACHE_POOL.get_stock_list()}")
         logger.info(f"earliest_year_month: {DATA_CACHE_POOL.get_earliest_year_month()}")
         logger.info(f"train_config: {DATA_CACHE_POOL.get_train_config()}")
-        
-        print(DATA_CACHE_POOL.get_meta()) # 调试一下  
-        
+
         # 开始运行
         start()  
 
