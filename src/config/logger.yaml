@@ -3,7 +3,7 @@ logger:
   default_prefix: '[Logger]'
 handlers:
   file_names: 'logs/app'
-  level: 'WARNING
+  level: 'WARNING'
   when: 'midnight'
   interval: 1
   backup_count: 5
