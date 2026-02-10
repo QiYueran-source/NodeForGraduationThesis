@@ -32,12 +32,14 @@ class DataLoader:
         month: Optional[int] = None, 
         code_list: Optional[List[str]] = None 
     ) -> Dict[Tuple[int, str], Any]:
-        """
+        f"""
         从redis中获取数据
         :param year: 年份
         :param month: 月份，如果提供则只加载该月份，否则加载所有月份(1-12)
         :param code_list: 股票代码列表，如果提供则只加载这些代码，否则加载所有代码
-        :return: 字典，键为(month, code)元组，值为数据
+        :return: 字典，键为(month, code)元组，值为数据  
+        如果返回空字典，则说明没有数据，需要重新获取  
+        如果返回None，则说明出现异常 
         """
         logger.debug(f"fetch_data 开始: year={year}, month={month}, code_list={f'指定{len(code_list)}只' if code_list else '全部'}")
         # 确定要加载的月份列表
@@ -102,10 +104,8 @@ class DataLoader:
                 logger.info(f"批量加载数据: year={year}, 请求={len(data_keys)}, 成功={len(result)}, 计数器更新={len(counters_to_incr)}")
 
         except Exception as e:
-            logger.warning(f"批量加载数据失败 year={year}: {e}")
-            # 如果批量操作失败，回退到逐个获取（保证可用性）
-            logger.info("回退到逐个加载模式...")
-            result = self._fetch_data_fallback(year, months, codes)
+            logger.warning(f"批量加载数据失败 year={year}: {e}，返回None")
+            return None  
 
         logger.debug(f"fetch_data 结束: year={year}, 返回条数={len(result)}")
         return result
@@ -145,36 +145,5 @@ class DataLoader:
         out = sorted(list(codes_set))
         logger.debug(f"_get_all_codes 合计: year={year}, 代码数={len(out)}")
         return out
-
-    def _fetch_data_fallback(self, year: int, months: List[int], codes: List[str]) -> Dict[Tuple[int, str], Any]:
-        """
-        回退方法：逐个加载数据（当批量操作失败时使用）
-        :param year: 年份
-        :param months: 月份列表
-        :param codes: 代码列表
-        :return: 数据字典
-        """
-        result = {}
-        for m in months:
-            for code in codes:
-                try:
-                    # 构建键
-                    slice_key = self.redis_prefix_manager.build_train_slice_key(year, m, code)
-                    counter_key = self.redis_prefix_manager.build_counter_key(year, m, code)
-
-                    # 获取数据并解析 JSON
-                    data = self.client.get(slice_key)
-                    if data is not None:
-                        parsed = self._parse_json(data)
-                        if parsed is not None:
-                            result[(m, code)] = parsed
-                            self.client.incr(counter_key)
-                except Exception as e:
-                    logger.warning(f"加载数据失败(回退模式) year={year}, month={m}, code={code}: {e}")
-                    continue
-
-        logger.info(f"回退模式加载完成: year={year}, 成功加载={len(result)}")
-        logger.debug(f"回退模式 fetch_data 结束: year={year}")
-        return result
 
 DATA_LOADER = DataLoader()

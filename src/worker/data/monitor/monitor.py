@@ -9,6 +9,7 @@ from re import T
 import time 
 import threading  
 import yaml  
+from typing import Optional
 
 # 组件 
 from src.worker.data.loader import DATA_LOADER  
@@ -78,6 +79,69 @@ class DataMonitor:
 
         logger.info('数据监控循环结束')
 
+    def _load_year_with_retry(self, year: int, exception_retry_times: int = 3, retry_interval: int = 5, retry_timeout: int = 300) -> Optional[dict]:
+        """
+        按配置对单个年份的数据加载做重试控制：
+        - data is None：认为是“异常”，使用 exception_retry_times 次数控制
+        - data == {}：认为是“当前无数据”，使用 retry_timeout + retry_interval 的时间窗口控制
+        - 有数据：立即返回
+        """
+        start_ts = time.time()
+        attempt = 0               # 总尝试次数（统计用）
+        exception_count = 0       # 仅统计 data is None 的次数
+
+        while True:
+            attempt += 1
+            data = DATA_LOADER.fetch_data(year)
+
+            # 有数据，直接成功
+            if data:
+                logger.info(
+                    f"year={year} 加载成功，条数={len(data)}，尝试={attempt} 次，异常次数={exception_count}"
+                )
+                return data
+
+            # data is None -> 异常路径，走“次数”控制
+            if data is None:
+                exception_count += 1
+                if exception_count >= exception_retry_times:
+                    logger.error(
+                        f"year={year} 加载异常重试次数达到上限 "
+                        f"{exception_retry_times} 次，最后一次在第 {attempt} 次尝试"
+                    )
+                    # 抛异常，让外层 monitor_loop 捕获并按已有逻辑 sleep(5)
+                    raise Exception(
+                        f"year={year} 数据加载异常重试次数超限 "
+                        f"({exception_count}/{exception_retry_times})"
+                    )
+
+                logger.warning(
+                    f"year={year} 加载异常(返回 None)，"
+                    f"{retry_interval}s 后重试 "
+                    f"(第 {attempt} 次，总异常次数 {exception_count}/{exception_retry_times})"
+                )
+                time.sleep(retry_interval)
+                continue
+
+            # 走到这里说明 data == {} -> 当前无数据，走“时间窗口”控制
+            elapsed = time.time() - start_ts
+            if elapsed >= retry_timeout:
+                logger.error(
+                    f"year={year} 当前无数据重试超时，已尝试 {attempt} 次，"
+                    f"耗时 {elapsed:.1f}s (retry_timeout={retry_timeout})"
+                )
+                raise Exception(
+                    f"year={year} 当前无数据重试超时 "
+                    f"(elapsed={elapsed:.1f}s, retry_timeout={retry_timeout})"
+                )
+
+            logger.warning(
+                f"year={year} 当前无数据(空 dict)，"
+                f"{retry_interval}s 后重试 "
+                f"(第 {attempt} 次，已耗时 {elapsed:.1f}s)"
+            )
+            time.sleep(retry_interval)
+
     def _check_and_load(self):
         """检查数据"""
         current_ym = DATA_CACHE_POOL.get_current_year_month()
@@ -103,7 +167,14 @@ class DataMonitor:
                     logger.info(f"已到达结束年份，停止加载: year={year} > end_year={end_year}")
                     break
 
-                data = DATA_LOADER.fetch_data(year)
+                # 使用带重试机制的加载方法
+                data = self._load_year_with_retry(
+                    year,
+                    exception_retry_times=self._config.get('exception_retry_times', 3),
+                    retry_interval=self._config.get('retry_interval', 5),
+                    retry_timeout=self._config.get('retry_timeout', 300),
+                )
+
                 logger.debug(f"loader 返回 year={year} 条数={len(data)}")
                 items = [{'code': code, 'year': year, 'month': month, 'data': data} for (month, code), data in data.items()]
                 DATA_CACHE_POOL.batch_put_train(items)
