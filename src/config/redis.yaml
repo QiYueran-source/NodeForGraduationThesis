@@ -35,3 +35,12 @@ monitoring:
   stop_timeout: 5              # 停止超时(秒)
   max_wait_checks: 5          # 最大等待检查次数
   check_interval: 0.5          # 每次检查间隔(秒)
+
+# 包装层重试配置（RetryableClient / RetryablePipeline）
+# 用于 get/set/incr/scan/pipeline.execute 等操作失败时的重试
+client_retry:
+  enabled: true              # 是否启用包装层重试
+  max_retries: 3             # 最大重试次数（不含首次）
+  retry_delay: 1             # 重试间隔(秒)，固定间隔时使用
+  exponential_backoff: false  # 是否指数退避：true 时每次间隔 = retry_delay * 2^attempt
+  max_delay: 30              # 指数退避时单次等待上限(秒)

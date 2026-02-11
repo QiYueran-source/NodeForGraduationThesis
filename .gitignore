@@ -19,6 +19,7 @@ __pycache__/
 
 # 帮助文档
 help/
+docs/   
 
 # ide配置 
 .vscode/  
