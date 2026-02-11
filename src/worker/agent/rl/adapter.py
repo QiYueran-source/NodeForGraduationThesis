@@ -52,9 +52,9 @@ class CustomCallback(BaseCallback):
 
     def _on_step(self) -> bool:
         """
-        若 current_year > rl_end_year 则返回 False 结束训练；每 save_every_n_steps 步保存一次模型。
-        """
-        from src.worker.save.saver import SAVER # 延迟导入，避免循环导入 
+         若 current_year > rl_end_year 则返回 False 结束训练；每 save_every_n_steps 步保存一次模型。
+         """
+        from src.worker.save.saver import SAVER # 延迟导入，避免循环导入
         
         # 首次进入时打一条调试日志
         if self.n_calls == 1:
