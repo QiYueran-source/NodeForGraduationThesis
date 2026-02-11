@@ -6,6 +6,7 @@ TCP服务端
 """
 # 库
 import subprocess
+import shutil
 import signal
 import socket
 import sys
@@ -125,6 +126,18 @@ def handle_message(message_str: str, socket_client: socket):
 
         train_config = message.pop('train_config')
         task_id = message.get('task_id')  # 从 message 中获取 task_id
+
+        # 清理之前的数据
+        data_dir = Path('/Node/data')
+        if data_dir.exists():
+            shutil.rmtree(data_dir)
+            data_dir.mkdir(parents=True, exist_ok=True)
+
+        # 清理日志
+        log_dir = Path('/Node/logs')
+        for log_file in log_dir.glob('app_*.log'):
+            log_file.unlink()
+        
 
         # 创建文件夹 
         task_id = message.get('task_id')
