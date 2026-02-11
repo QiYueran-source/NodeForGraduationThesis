@@ -3,3 +3,7 @@ logs/*
 
 data/*
 !data/README.md
+
+# git相关
+.git
+.gitignore
