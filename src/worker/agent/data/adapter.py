@@ -46,9 +46,6 @@ class AgentDataAdapter:
         self._data_pool_lock = threading.Lock() # 保护数据池的锁  
         self._portfolio_pool_lock = threading.Lock() # 保护组合池的锁  
 
-        # 当前窗口
-        self._current_year_month = self.earliest_year_month  
-
         # 采样与 shuffle 种子（env_config.sample_and_shuffle_seed 优先，否则用 train_config.seed 默认 42）
         env_config = DATA_CACHE_POOL.get_env_config() or {}
         self._sample_and_shuffle_seed = env_config.get('sample_and_shuffle_seed')
@@ -68,8 +65,8 @@ class AgentDataAdapter:
         # 生成掩码
         self._generate_mask()
 
-        # 设置当前窗口（不写 pool，保留 Monitor 的 start_year-1 让首次加载从 start_year 开始）
-        self._set_current_year_month(sync_to_pool=False)
+        # 设置当前窗口并写入 record（adapter 为唯一写者，无争用）
+        self._set_current_year_month()
 
     def _load_config(self):
         """加载配置"""
@@ -134,21 +131,18 @@ class AgentDataAdapter:
         """
         return ym1[0] > ym2[0] or (ym1[0] == ym2[0] and ym1[1] > ym2[1])
 
-    def _set_current_year_month(self, sync_to_pool: bool = True):
+    def _set_current_year_month(self):
         """
-        初始化/对齐当前窗口：default=(start_year-1,1) 与 m 对齐取较晚者。
-        sync_to_pool=False 时只更新 self._current_year_month，不写 pool（供 __init__ 用，保留 Monitor 的 start_year-1 让首次加载从 start_year 开始）。
-        sync_to_pool=True 时同时写回 pool（供 reset() 用，训练开始时同步对齐后的窗口）。
+        初始化/对齐当前窗口并写入 record：default=(start_year-1,1) 与 m 对齐取较晚者。
         """
         default_start_year_month = (self.start_year - 1, 1)
         m = self.train_config.get('m', 1)
         earliest_available_year_month = self._roll_year_month(self.earliest_year_month, m - 1)
         if AgentDataAdapter._year_month_greater(earliest_available_year_month, default_start_year_month):
-            self._current_year_month = earliest_available_year_month
+            current_year_month = earliest_available_year_month
         else:
-            self._current_year_month = default_start_year_month
-        if sync_to_pool:
-            DATA_CACHE_POOL.put_current_year_month(self._current_year_month[0], self._current_year_month[1])
+            current_year_month = default_start_year_month
+        DATA_CACHE_POOL.put_current_year_month(current_year_month[0], current_year_month[1])
         
     # ========== 训练数据接口 ==========
     def contains_train_data(self, year: int, month: int, code: str) -> bool:
@@ -169,8 +163,8 @@ class AgentDataAdapter:
         2.判断在不在worker缓存池  
         如果在，获取，检查是否已删除，如果已删除则报错；否则保存到agent缓存池并返回
         3.如果不在，则判断  
-        查询的数据是否大于 record 当前窗口 current_year_month（即查询的数据还未加载）  
-        如果大于，则等待，直到查询到数据，检查是否已删除，如果已删除则报错
+        请求的 (year,month) 是否大于 cache 加载进度 current_train_year_month（即数据尚未加载入 cache）  
+        若大于则阻塞等待直到数据进入 cache 或超时
         4.否则，返回 None（数据不存在，如窗口不足 m 期）
         """
         key = (year, month, code)
@@ -196,10 +190,10 @@ class AgentDataAdapter:
                 self._train_data_pool[key] = (factors, rtr)
                 return factors, rtr
         
-        # 判断是否大于当前窗口 current_year_month，是则循环等待
-        current_ym = DATA_CACHE_POOL.get_current_year_month()
-        if current_ym and self._year_month_greater((year, month), current_ym):
-            logger.debug(f"数据大于当前窗口，等待数据加载: ({year}, {month}) > {current_ym}")
+        # 判断是否超出 cache 加载进度，是则循环等待
+        cache_ym = DATA_CACHE_POOL.current_train_year_month
+        if cache_ym is None or self._year_month_greater((year, month), cache_ym):
+            logger.debug(f"数据超出缓存加载进度，等待数据加载: ({year}, {month}) > {cache_ym}")
             # 循环等待 
             start_time = dt.datetime.now() # 阻塞，直到数据加载完成，超时则报错  
             while not DATA_CACHE_POOL.contains_train(year, month, code): 
@@ -264,46 +258,51 @@ class AgentDataAdapter:
     # ========== 训练窗口接口 ========== 
     def win_roll(self)->bool:
         """
-        如果 current_year_month < (end_year, 12)，则滚动训练窗口  
-            1._current_year_month += 1  
-            2.cusor = 0
-            3.DATA_CACHE_POOL.put_current_year_month(...)
-            4.删除 adapter 中最早一期的训练数据（已滚出窗口），保持内存小
-            5.打乱组合顺序，使下一窗口的采样顺序与本月不同，保证多样性  
-            6.返回True
-        否则，返回False
+        若 record 中 current_year_month < (end_year, 12)，则滚动训练窗口：
+            1. 从 record 读当前窗口，计算下一期并写回 record
+            2. cursor = 0，打乱组合顺序
+            3. 删除 adapter 中最早一期的训练数据（已滚出窗口）
+            4. 返回 True
+        否则返回 False
         """
-        if AgentDataAdapter._year_month_greater((self.end_year, 12), self._current_year_month):
-            self._current_year_month = self._roll_year_month(self._current_year_month, 1)
-            # 打乱组合顺序，使下一窗口的采样顺序与本月不同，保证多样性（用有效种子可复现）
-            with self._portfolio_pool_lock:
-                ym_int = self._current_year_month[0] * 12 + self._current_year_month[1]
-                shuffle_seed = self._effective_sample_seed + ym_int
-                random.Random(shuffle_seed).shuffle(self._portfolio_pool)
-                self._portfolio_cursor = 0
-            DATA_CACHE_POOL.put_current_year_month(self._current_year_month[0], self._current_year_month[1])
-
-            # 删除最早一期的训练数据（当前窗口为 current ~ current-(m-1)，不再需要 current-m）
-            m = self.train_config.get('m', 1)
-            ym_to_drop = self._roll_year_month(self._current_year_month, -m)
-            with self._data_pool_lock:
-                keys_to_drop = [k for k in self._train_data_pool if (k[0], k[1]) == ym_to_drop]
-            for (y, mo, code) in keys_to_drop:
-                self.delete_train_data(y, mo, code)
-            if keys_to_drop:
-                logger.info(f'win_roll: 已删除最早训练数据 {ym_to_drop[0]}-{ym_to_drop[1]}, 条数={len(keys_to_drop)}')
-
-            logger.info(f'滚动成功，当前ym:{self._current_year_month[0]}-{self._current_year_month[1]}')
-            return True
-        else:
+        current_ym = DATA_CACHE_POOL.get_current_year_month()
+        if current_ym is None:
+            logger.warning("record 中当前窗口未设置，无法滚动")
+            return False
+        if not AgentDataAdapter._year_month_greater((self.end_year, 12), current_ym):
             logger.warning('已经达到结束年月，暂停滚动')
             return False
+        next_ym = self._roll_year_month(current_ym, 1)
+        
+        # 打乱组合顺序，使下一窗口的采样顺序与本月不同，保证多样性（用有效种子可复现）
+        with self._portfolio_pool_lock:
+            ym_int = next_ym[0] * 12 + next_ym[1]
+            shuffle_seed = self._effective_sample_seed + ym_int
+            random.Random(shuffle_seed).shuffle(self._portfolio_pool)
+            self._portfolio_cursor = 0
+        DATA_CACHE_POOL.put_current_year_month(next_ym[0], next_ym[1])
+
+        # 删除最早一期的训练数据（当前窗口为 next ~ next-(m-1)，不再需要 next-m）
+        m = self.train_config.get('m', 1)
+        ym_to_drop = self._roll_year_month(next_ym, -m)
+        with self._data_pool_lock:
+            keys_to_drop = [k for k in self._train_data_pool if (k[0], k[1]) == ym_to_drop]
+        for (y, mo, code) in keys_to_drop:
+            self.delete_train_data(y, mo, code)
+        if keys_to_drop:
+            logger.info(f'win_roll: 已删除最早训练数据 {ym_to_drop[0]}-{ym_to_drop[1]}, 条数={len(keys_to_drop)}')
+
+        logger.info(f'滚动成功，当前ym:{next_ym[0]}-{next_ym[1]}')
+        return True
         
     def win_get_current_year_month(self) -> Tuple[int, int]:
         """
-        获取训练窗口的当前年月  
+        获取训练窗口的当前年月（从 record 读，adapter 为唯一写者）
         """
-        return self._current_year_month
+        ym = DATA_CACHE_POOL.get_current_year_month()
+        if ym is None:
+            raise Exception("当前窗口未设置 (record.current_year_month)")
+        return ym
 
     def win_get_a_portfolio(self) -> Tuple[str]:
         """
@@ -323,15 +322,15 @@ class AgentDataAdapter:
     def win_get_factors_tensor(self, portfolio: Tuple[str]) -> torch.Tensor:
         """
         获取训练窗口的因子   
-        即current_year_month 到 current_year_month - m + 1 的因子的三维tensor  
-        根据portfolio，获取m期因子的三维tensor，若不足m期则返回空tensor  
-        按 self.mask 掩码：只取 mask[j]==1 对应位置的因子。  
+        即 current_year_month 到 current_year_month - m + 1 的因子的三维 tensor  
+        根据 portfolio 获取 m 期因子，若不足 m 期则返回空 tensor。按 self.mask 掩码。  
         """
+        current_ym = self.win_get_current_year_month()
         factors_tensor = []
         for code in portfolio:
             code_factors = []
             for i in range(self.train_config.get('m', 1)):
-                year, month = self._roll_year_month(self._current_year_month, -i)
+                year, month = self._roll_year_month(current_ym, -i)
                 result = self.get_train_data(year, month, code)
                 if result is None:
                     return torch.tensor([], dtype=torch.float32)
