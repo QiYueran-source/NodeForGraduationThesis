@@ -72,7 +72,8 @@ class AgentDataAdapter:
         """加载配置"""
         try:
             with open('src/config/hyparam.yaml', 'r', encoding='utf-8') as f:
-                self._config = yaml.safe_load(f).get('agent_data', {})
+                data = yaml.safe_load(f)
+                self._config = data.get('agent_data') or (data.get('agent') or {}).get('data') or {}
         except Exception as e:
             logger.error(f"加载配置失败: {e}")
             raise 
@@ -130,6 +131,12 @@ class AgentDataAdapter:
         return: 是否大于  
         """
         return ym1[0] > ym2[0] or (ym1[0] == ym2[0] and ym1[1] > ym2[1])
+
+    def _get_zero_fallback(self) -> Tuple[List[float], float]:
+        """取不到数据时的全零兜底：(全零因子列表, 0.0 收益)。因子长度与 self.mask 一致。"""
+        n = len(self.mask) if self.mask else self.mask_len
+        risk_free_rate = DATA_CACHE_POOL.get_performance_config().get('risk_free_rate', 0.00)
+        return ([0.0] * n, risk_free_rate)
 
     def _set_current_year_month(self):
         """
@@ -204,6 +211,9 @@ class AgentDataAdapter:
                 time.sleep(self._config.get('retry_delay', 5))
                 now = dt.datetime.now()
                 if now - start_time > dt.timedelta(seconds=self._config.get('timeout', 300)):
+                    if self._config.get('fallback_to_zero_when_unavailable', False):
+                        logger.warning(f"获取数据超时，返回全零兜底: {year}, {month}, {code}")
+                        return self._get_zero_fallback()
                     logger.error(f"获取数据超时: {year}, {month}, {code}")
                     raise Exception(f"获取数据超时: {year}, {month}, {code}")
             data = DATA_CACHE_POOL.get_train(code, year, month)
@@ -216,7 +226,10 @@ class AgentDataAdapter:
                 self._train_data_pool[key] = (factors, rtr)
                 return factors, rtr
 
-        # 都不在，返回 None（数据不存在）
+        # 都不在，返回 None 或全零兜底（数据不存在）
+        if self._config.get('fallback_to_zero_when_unavailable', False):
+            logger.warning(f"数据不存在，返回全零兜底: {year}, {month}, {code}")
+            return self._get_zero_fallback()
         logger.debug(f"数据不存在，返回 None: {year}, {month}, {code}")
         return None
         

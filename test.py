@@ -157,3 +157,9 @@ def test_reward_calculation_flow():
 
 if __name__ == "__main__":
     test_reward_calculation_flow()
+    import redis
+    from src.worker.data.redis import REDIS_CONNECTOR
+    client = REDIS_CONNECTOR.get_client()
+    redis_client = redis.Redis()
+    redis_client.get_retry()
+    client.get()
