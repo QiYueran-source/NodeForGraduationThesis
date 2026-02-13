@@ -203,13 +203,23 @@ class DataCachePool:
 
             return False
     
-    def count_years_train(self) -> int:
+    @property
+    def train_years_count(self) -> int:
         """
         获取年份数量
         :return: 年份数量
         """
         with self._lock:
             return len(set([year for _, year, _ in self._cache.keys()]))
+    
+    @property
+    def current_train_year_month(self) -> Optional[Tuple[int, int]]:
+        """当前训练进度，训练数据中最大(year,month)"""  
+        with self._lock:
+            if self._cache:
+                return max([(year, month) for (_, year, month) in self._cache.keys()])
+            return (self.get_start_year() - 1, 12) # 如果缓存为空，则返回开始年份-1和12月
+        
     
     # ========== Meta数据接口 ==========
     def get_task_id(self) -> Optional[str]:

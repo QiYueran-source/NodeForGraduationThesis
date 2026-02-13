@@ -118,9 +118,9 @@ class RollingEnv(gym.Env):
         - info: 信息
         """
         # 调试阻塞
-        import time 
-        time.sleep(1200)
-        print('调试阻塞1200s')
+        # import time 
+        # time.sleep(1200)
+        # print('调试阻塞1200s')
 
         year, month = AGENT_DATA_ADAPTER.win_get_current_year_month()
         info = {"year": year, "month": month, "msg": "failed"}

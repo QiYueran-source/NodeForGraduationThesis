@@ -45,6 +45,7 @@ class MLP(nn.Module):
         out = self.linear(x)
         out = self.activation(out)
         out = two_step_normalize(out, short_limit=0.0)
+        return out 
 
     def backward(self, loss: torch.Tensor):
         """

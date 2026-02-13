@@ -47,8 +47,7 @@ class DataMonitor:
         if not self.now_year:
             logger.error("未设置开始年份")
             raise Exception("未设置开始年份")
-        # 初始化当前窗口为 start_year 年 1 月
-        DATA_CACHE_POOL.put_current_year_month(self.now_year, 1)
+        # 当前窗口由 adapter 通过 record 维护，monitor 仅用 cache 进度（current_train_year_month）判断加载
         logger.debug(f"_load_config 完成: start_year={self.now_year}, check_interval={self._config.get('check_interval')}, min_year={self._config.get('min_year')}, max_year={self._config.get('max_year')}")
 
     def monitor_loop(self):
@@ -66,7 +65,8 @@ class DataMonitor:
                     # 检查是否仍在运行（防止虚假唤醒）
                     if not self.started:
                         break
-
+                    
+                    # 同步执行，避免异步执行导致数据不一致  
                     self._check_and_load()
 
                 except Exception as e:
@@ -143,14 +143,14 @@ class DataMonitor:
             time.sleep(retry_interval)
 
     def _check_and_load(self):
-        """检查数据"""
-        current_ym = DATA_CACHE_POOL.get_current_year_month()
+        """检查数据：以 cache 中最大 (year, month) 为进度，不足则加载"""
+        current_ym = DATA_CACHE_POOL.current_train_year_month
         if not current_ym:
-            logger.error("未设置当前窗口 (year, month)")
-            raise Exception("未设置当前窗口 (year, month)")
+            logger.error("无法获取缓存加载进度 (year, month)")
+            raise Exception("无法获取缓存加载进度 (year, month)")
         now_year = current_ym[0]
 
-        years = DATA_CACHE_POOL.count_years_train()
+        years = DATA_CACHE_POOL.train_years_count
         min_year = self._config.get('min_year', 1)
         max_year = self._config.get('max_year', 2)
 
@@ -179,7 +179,7 @@ class DataMonitor:
                 items = [{'code': code, 'year': year, 'month': month, 'data': data} for (month, code), data in data.items()]
                 DATA_CACHE_POOL.batch_put_train(items)
                 self.now_year = year
-                DATA_CACHE_POOL.put_current_year_month(year, 12)
+                # DATA_CACHE_POOL.put_current_year_month(year, 12) # 废弃，进度由agent的rolling控制 
                 logger.info(f"数据已写入缓存池: year={year}, 条数={len(items)}, 当前窗口=({year}, 12)")  
 
     def start(self):

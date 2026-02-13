@@ -80,7 +80,7 @@ class NetAdapter:
         动作
         obs: 观测(m,n,mask_len)维度tensor  
         """
-        if obs.dim() != 3 or obs.shape[0] != self.m or obs.shape[1] != self.m or obs.shape[2] != self.mask_len:
+        if obs.dim() != 3 or obs.shape[0] != self.n or obs.shape[1] != self.m or obs.shape[2] != self.mask_len:
             logger.error(f"观测维度错误，期望{(self.m,self.n,self.mask_len)}，实际{obs.shape}")
             raise 
         return self._model(obs)
