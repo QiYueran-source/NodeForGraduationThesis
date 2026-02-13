@@ -337,6 +337,16 @@ class DataCachePool:
         with self._meta_lock:
             self._meta['end_year'] = year
             self._meta['end_month'] = 12
+    
+    def get_short_limit(self) -> Optional[float]:
+        """获取短限制"""
+        with self._meta_lock:
+            return self._meta.get('short_limit')
+    
+    def put_short_limit(self, limit: float):
+        """设置做空限制"""
+        with self._meta_lock:
+            self._meta['short_limit'] = limit
 
     def get_meta(self) -> Dict:
         """获取元数据（结构见本文件顶部：顶层固定 + train_config 随机）"""

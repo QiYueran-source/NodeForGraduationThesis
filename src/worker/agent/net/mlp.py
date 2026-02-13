@@ -5,6 +5,9 @@ import torch
 import torch.nn as nn
 from typing import Optional
 
+# 组件
+from src.worker.agent.net.utils import two_step_normalize
+
 class MLP(nn.Module):
     """
     单层：展平 → Linear → softmax
@@ -12,13 +15,13 @@ class MLP(nn.Module):
     输出: (..., n+1)，和为 1
     """
 
-    def __init__(self, n: int, m: int, mask_len: int, dropout: Optional[float] = None, output_fun_cate: int = 0, **config: dict):
+    def __init__(self, n: int, m: int, mask_len: int, dropout: Optional[float] = None, short_limit: float = 0.0, **config: dict):
         super().__init__()
         self.n = n
         self.m = m
         self.mask_len = mask_len
         self.output_dim = n + 1
-        self.output_fun_cate = output_fun_cate  # 0=softmax, 1=tanh
+        self.short_limit = short_limit
 
         # 线性层
         input_dim = n * m * mask_len
@@ -33,15 +36,15 @@ class MLP(nn.Module):
         else:
             self.dropout = None
 
+    
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x.reshape(*x.shape[:-3], -1)
         if self.dropout is not None:
             x = self.dropout(x)
         out = self.linear(x)
         out = self.activation(out)
-        if self.output_fun_cate == 0:
-            return torch.softmax(out, dim=-1)
-        return torch.tanh(out)
+        out = two_step_normalize(out, short_limit=0.0)
 
     def backward(self, loss: torch.Tensor):
         """

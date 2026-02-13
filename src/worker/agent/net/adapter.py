@@ -25,6 +25,7 @@ class NetAdapter:
         self.seed = tc.get('seed', 42)
         self.m = tc.get('m', 1)
         self.n = DATA_CACHE_POOL.get_n() or 1
+        self.short_limit = DATA_CACHE_POOL.get_short_limit() or 0.0
         self.mask_len = tc.get('mask_len', 60)
         self.model_config = tc.get('model_config', {})
 
@@ -52,9 +53,19 @@ class NetAdapter:
         - 0: mlp1
         """
         if self.cate == 0:
-            self._model = MLP(self.n, self.m, self.mask_len, self.dropout,self.output_fun_cate, **self.config)
+            self._model = MLP(
+                self.n, 
+                self.m, 
+                self.mask_len, 
+                self.dropout, 
+                self.short_limit, 
+                **self.config
+            )
         else:
             raise
+
+        # 添加过滤头
+        self._model.__setattr__('set_filter_head', self._set_filter_head)
 
     def _to_device(self):
         """

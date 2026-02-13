@@ -60,6 +60,7 @@ def parse_args_and_load_pool():
     DATA_CACHE_POOL.put_max_portfolios_num(meta['max_portfolios_num'])
     DATA_CACHE_POOL.put_performance_config(meta['performance_config'])
     DATA_CACHE_POOL.put_env_config(meta['env_config'])
+    DATA_CACHE_POOL.put_short_limit(meta['short_limit'])
     train_config_json = args.train_config
     train_config = json.loads(train_config_json)
     DATA_CACHE_POOL.put_train_config(train_config)
