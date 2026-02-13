@@ -25,17 +25,20 @@ class RollingEnv(gym.Env):
 
         # 配置
         tc = DATA_CACHE_POOL.get_train_config() or {}
+        ec = DATA_CACHE_POOL.get_env_config() or {}
         self.n = int(DATA_CACHE_POOL.get_n() or 1)  # 每个组合标的数（固定，meta 顶层）
         self.m = int(tc.get("m", 1))  # 回看期数
         self.mask_len = int(tc.get("mask_len", 60))
         self.seed = int(tc.get("seed", 42))
+        box_min = float(ec.get("box_min", 0.0))
+        box_max = float(ec.get("box_max", 1.0))
 
         # obs 三维，展平由网络实现
         self.observation_space = gym.spaces.Box(
             low=-np.inf, high=np.inf, shape=(self.n, self.m, self.mask_len), dtype=np.float32
         )
         self.action_space = gym.spaces.Box(
-            low=0.0, high=1.0, shape=(self.n + 1,), dtype=np.float32
+            low=box_min, high=box_max, shape=(self.n + 1,), dtype=np.float32
         )
 
         # 占位零观测（本局结束或无组合时返回，只读勿改）
@@ -114,6 +117,11 @@ class RollingEnv(gym.Env):
         - truncated: False
         - info: 信息
         """
+        # 调试阻塞
+        import time 
+        time.sleep(1200)
+        print('调试阻塞1200s')
+
         year, month = AGENT_DATA_ADAPTER.win_get_current_year_month()
         info = {"year": year, "month": month, "msg": "failed"}
 

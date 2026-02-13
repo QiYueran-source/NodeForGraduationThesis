@@ -30,6 +30,7 @@ class NetAdapter:
 
         # 模型配置
         self.cate = self.model_config.get('cate', 0)
+        self.output_fun_cate = self.model_config.get('output_fun_cate', 0)  # 0=softmax, 1=tanh
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.dropout = self.model_config.get('dropout', 0)
         self.config = self.model_config.get('config', {})
@@ -51,7 +52,7 @@ class NetAdapter:
         - 0: mlp1
         """
         if self.cate == 0:
-            self._model = MLP(self.n, self.m, self.mask_len, self.dropout, **self.config)
+            self._model = MLP(self.n, self.m, self.mask_len, self.dropout,self.output_fun_cate, **self.config)
         else:
             raise
 
