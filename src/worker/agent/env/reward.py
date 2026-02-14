@@ -246,6 +246,7 @@ class RewardManager:
 
         使用 performance_config.std_window 作为纵向标准化窗口：从当前 (year, month) 往前取
         std_window 期，收集这些期内所有组合的该指标值，计算均值和标准差后对当前组合做 z-score。
+        分母标准差使用 performance_config.std_floor 做下限（默认 0.01），避免 std 过小导致 z-score 爆炸。
 
         输入：
         - year: 年份
@@ -293,7 +294,11 @@ class RewardManager:
                 std_list = [1.0, 1.0, 1.0, 1.0]
             else:
                 mean_list = [float(np.mean(performance_list[i])) for i in range(4)]
-                std_list = [float(np.std(performance_list[i]) + 1e-6) for i in range(4)]
+                std_floor = self._performance_config.get('std_floor', 0.01)
+                std_list = [
+                    max(float(np.std(performance_list[i]) + 1e-6), std_floor)
+                    for i in range(4)
+                ]
 
         normalized_performance = [
             (portfolio_performance_record[i] - mean_list[i]) / std_list[i]
