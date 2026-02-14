@@ -84,7 +84,7 @@ class CustomCallback(BaseCallback):
         # 保存表现和奖励快照(每300步)
         if self._step_cursor % 300 == 0 and self._step_cursor >= 300:
             logger.debug(f"保存表现和奖励快照, 步数: {self._step_cursor}")
-            SAVER.append_performance_and_reward_snapshot()
+            SAVER.append_performance_and_reward_snapshot(segment=True)
 
         # 保存模型 
         self._step_cursor += 1

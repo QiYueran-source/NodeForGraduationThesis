@@ -28,6 +28,10 @@ class Saver:
         # 配置
         self._record_config = {} 
 
+        # 文件游标与锁（保证 segment 与文件名一致，多线程安全）
+        self._performance_and_reward_snapshot_cursor = 0
+        self._snapshot_lock = threading.Lock()
+
         # 加载配置 
         self._load_config()
 
@@ -80,8 +84,11 @@ class Saver:
         except Exception as e:
             logger.error(f"异步写入 record.jsonl 失败: {e}")
 
-    def append_performance_and_reward_snapshot(self, daemon:bool = True):
-        """异步保存表现和奖励快照到本地，按 JSONL 追加到 performance_and_reward.jsonl，不阻塞主流程。"""
+    def append_performance_and_reward_snapshot(self, segment: bool = False, daemon: bool = True):
+        """
+        异步保存表现和奖励快照到本地，按 JSONL 追加，不阻塞主流程。
+        segment: True 时 cursor+=1 后写入新段文件，否则追加到当前段文件。
+        """
         current_ym = DATA_CACHE_POOL.get_current_year_month()
         if not current_ym:
             logger.warning("当前窗口未设置，跳过保存快照")
@@ -90,14 +97,18 @@ class Saver:
         incremental_result = REWARD_MANAGER.get_incremental_snapshot(year, month)
         if not incremental_result:
             return
-        record_path = self._get_base_path() / "performance_and_reward.jsonl"
         lines = []
         for key, data in incremental_result.items():
             y, m, portfolio = key
             obj = {"year": y, "month": m, "portfolio": list(portfolio), "data": self._serialize_perf(data)}
-            obj = self._round_floats_in(obj, 3)  # 写入 performance_and_reward.jsonl 前统一 3 位有效数字
+            obj = self._round_floats_in(obj, 3)
             lines.append(json.dumps(obj, ensure_ascii=False))
-        threading.Thread(target=self._write_jsonl_worker, args=(record_path, lines), daemon=daemon).start() # 不守护，保证落盘陈功
+        with self._snapshot_lock:
+            if segment:
+                self._performance_and_reward_snapshot_cursor += 1
+            file_name = f"performance_and_reward_{self._performance_and_reward_snapshot_cursor}.jsonl"
+            record_path = self._get_base_path() / file_name
+        threading.Thread(target=self._write_jsonl_worker, args=(record_path, lines), daemon=daemon).start()
 
     def _write_model_worker(self, state_dict: dict, out_path: str):
         """后台线程：将 state_dict 写入 safetensors 文件。"""
