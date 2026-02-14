@@ -180,7 +180,7 @@ class RewardManager:
         return_tuple = AGENT_DATA_ADAPTER.win_get_rtr(portfolio)
         if len(return_tuple) != len(decision_weights):
             logger.error(f"收益率tuple和decision_weights长度不一致: {len(return_tuple)} != {len(decision_weights)}")
-            raise 
+            raise Exception(f"收益率tuple和decision_weights长度不一致: {len(return_tuple)} != {len(decision_weights)}")
         rtr = self._calculate_weighted_return(return_tuple, decision_weights)
         performance.append(rtr)
         

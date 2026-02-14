@@ -119,7 +119,8 @@ def train():
         SAVER.save_model()
 
     # 使用模型继续预测，直到end_year或收到停止信号
-    logger.info("开始滚动预测")
+    logger.info("========= 开始滚动预测 =========")
+    print("========= 开始滚动预测 =========")
     _save_cursor = 0
     while DATA_CACHE_POOL.get_running():
         ym = DATA_CACHE_POOL.get_current_year_month()
