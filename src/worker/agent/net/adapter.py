@@ -64,9 +64,6 @@ class NetAdapter:
         else:
             raise
 
-        # 添加过滤头
-        self._model.__setattr__('set_filter_head', self._set_filter_head)
-
     def _to_device(self):
         """
         将模型移动到 self.device（有 GPU 则 cuda，否则 cpu，自动决定）
