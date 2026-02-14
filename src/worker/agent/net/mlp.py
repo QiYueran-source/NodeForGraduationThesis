@@ -6,7 +6,7 @@ import torch.nn as nn
 from typing import Optional
 
 # 组件
-from src.worker.agent.net.utils import two_step_normalize
+from src.worker.agent.utils.math import two_step_normalize
 
 class MLP(nn.Module):
     """
@@ -44,7 +44,7 @@ class MLP(nn.Module):
             x = self.dropout(x)
         out = self.linear(x)
         out = self.activation(out)
-        out = two_step_normalize(out, short_limit=0.0)
+        out = two_step_normalize(out, short_limit=self.short_limit)
         return out 
 
     def backward(self, loss: torch.Tensor):
