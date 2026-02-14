@@ -152,12 +152,15 @@ def train():
             continue
 
         # 保存结果
+        ec = DATA_CACHE_POOL.get_env_config() or {}
+        save_record_every_n_steps = ec.get('save_record_every_n_steps', 50)
+        save_performance_and_reward_every_n_steps = ec.get('save_performance_and_reward_every_n_steps', 300)
         _save_cursor += 1
-        if _save_cursor % 50 == 0 and _save_cursor >= 50:
+        if _save_cursor % save_record_every_n_steps == 0 and _save_cursor >= save_record_every_n_steps:
             SAVER.save_record()
-        if _save_cursor % 300 == 0 and _save_cursor >= 300:
-            SAVER.append_performance_and_reward_snapshot()
-            _save_cursor = 0
+        if _save_cursor % save_performance_and_reward_every_n_steps == 0 and _save_cursor >= save_performance_and_reward_every_n_steps:
+            SAVER.append_performance_and_reward_snapshot(segment=True)
+            
 
 def send_result():
     """发送结果到主机（调用 rsync 脚本，需 task_id 与 frpc.state 中的 NODE_NAME）。"""
