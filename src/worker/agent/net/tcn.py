@@ -54,7 +54,7 @@ class TCN(nn.Module):
         self.pool = nn.AdaptiveAvgPool1d(1)
         hidden = num_channels[-1]
         self.fc = nn.Linear(hidden, self.output_dim)
-        self.activation = nn.ReLU()
+        self.activation = nn.Tanh()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: (..., n, m, mask_len) -> (batch, n*m, mask_len)
@@ -62,12 +62,11 @@ class TCN(nn.Module):
         x = x.reshape(-1, self.n * self.m, self.mask_len)
 
         x = self.conv_stack(x)
-        # 因果：若用左侧 padding，此处可裁剪掉右侧 (kernel_size-1)*num_layers；这里用池化则无需裁剪
         x = self.pool(x)  # (batch, hidden, 1)
         x = x.squeeze(-1)  # (batch, hidden)
         x = self.fc(x)
         x = self.activation(x)
-        x = two_step_normalize(x, short_limit=self.short_limit)
+        x = torch.stack([two_step_normalize(x[i], short_limit=self.short_limit) for i in range(x.shape[0])])
 
         if batch_shape:
             x = x.reshape(*batch_shape, self.output_dim)

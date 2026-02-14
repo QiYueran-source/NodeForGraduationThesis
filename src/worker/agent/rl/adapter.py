@@ -174,7 +174,7 @@ class ReinforcementLearningAdapter:
             max_grad_norm=self.opt.get('max_grad_norm', 0.5),
             seed=self.seed
         )
-    
+
     def _set_a2c(self):
         pass 
 

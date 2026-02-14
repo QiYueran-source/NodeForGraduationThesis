@@ -28,7 +28,7 @@ class MLP(nn.Module):
         self.linear = nn.Linear(input_dim, self.output_dim)
 
         # 激活层
-        self.activation = nn.ReLU()
+        self.activation = nn.Tanh()
 
         #  dropout
         if dropout is not None and dropout > 0:
@@ -44,7 +44,7 @@ class MLP(nn.Module):
             x = self.dropout(x)
         out = self.linear(x)
         out = self.activation(out)
-        out = two_step_normalize(out, short_limit=self.short_limit)
+        out = torch.stack([two_step_normalize(out[i], short_limit=self.short_limit) for i in range(out.shape[0])])
         return out 
 
     def backward(self, loss: torch.Tensor):

@@ -30,6 +30,10 @@ from src.utils.warn import deprecated
 from src.utils.logger import get_module_logger
 logger = get_module_logger(__name__, prefix='[RewardCalculator]')
 
+# 表现指标数量与顺序（与 performance / normalized_performance / reward_weights 一致）
+NUM_PERFORMANCE_INDICATORS = 5
+PERFORMANCE_INDICATOR_KEYS = ('rtr', 'vol', 'sharpe', 'max_drawdown', 'diversification')
+
 
 class RewardManager:
     def __init__(self):
@@ -47,7 +51,7 @@ class RewardManager:
         self._record_lock = threading.Lock()
         
         # 记录  
-        self._record = {} # 组合表现字典：key为(year,month,portfolio)，value为 decision_weights:组合权重(agent决策), performance:[回报率，波动率，夏普比率，最大回撤],normalized_performance:[归一化回报率，归一化波动率，归一化夏普比率，归一化最大回撤], reward:奖励   
+        self._record = {} # 组合表现字典：key为(year,month,portfolio)，value为 decision_weights, performance:[rtr,vol,sharpe,max_drawdown,diversification], normalized_performance, reward   
 
         # 快照进度 
         self._snapshot_progress = (-1, -1) # 保证第一次快照不为空
@@ -153,6 +157,22 @@ class RewardManager:
                     max_dd = dd
         return max_dd
 
+    def _calculate_diversification(self, decision_weights: Tuple[float]) -> float:
+        """权重分散度：归一化熵，取值 [0,1]，越大越分散。等权为 1，单押为 0。"""
+        w = np.asarray(decision_weights, dtype=np.float64)
+        if w.size == 0:
+            return 0.0
+        eps = 1e-12
+        w = np.clip(w, 0.0, None)
+        s = w.sum()
+        if s <= 0:
+            return 0.0
+        w = w / s
+        n = w.size
+        max_entropy = np.log(n) if n > 1 else 1.0
+        entropy = -np.sum(w * np.log(w + eps))
+        return float(entropy / max_entropy) if max_entropy > 0 else 0.0
+
     # =============== 表现接口 ===============  
     def calc_portfolio_performance(self, year:int, month:int, portfolio: Tuple[str], decision_weights: Tuple[float]):
         """计算并保存表现  
@@ -214,7 +234,10 @@ class RewardManager:
 
         # 计算最大回撤 
         # 最大回撤取负数，因为最大回撤越大，奖励越小  
-        performance.append(-1 * self._calculate_max_drawdown(portfolio_return_series_for_rolling))  
+        performance.append(-1 * self._calculate_max_drawdown(portfolio_return_series_for_rolling))
+
+        # 分散度（归一化熵，越大越分散，与奖励方向一致）
+        performance.append(self._calculate_diversification(decision_weights))
 
         # 保存表现
         record['performance'] = performance
@@ -252,13 +275,13 @@ class RewardManager:
         - year: 年份
         - month: 月份
         - portfolio: 组合
-        输出：归一化表现 [norm_rtr, norm_vol, norm_sharpe, norm_max_drawdown]，无记录时返回 None
+        输出：归一化表现 [norm_rtr, norm_vol, norm_sharpe, norm_max_drawdown, norm_diversification]，无记录时返回 None
         """
         key = (year, month, portfolio)
 
         portfolio_performance_record = self._record.get(key, {}).get('performance', [])
-        if not portfolio_performance_record or len(portfolio_performance_record) != 4:
-            logger.warning(f"组合{portfolio}在{year}年{month}月没有记录或表现长度非4，无法计算归一化表现")
+        if not portfolio_performance_record or len(portfolio_performance_record) != NUM_PERFORMANCE_INDICATORS:
+            logger.warning(f"组合{portfolio}在{year}年{month}月没有记录或表现长度非{NUM_PERFORMANCE_INDICATORS}，无法计算归一化表现")
             return None
 
         std_window = self._performance_config.get('std_window')
@@ -267,42 +290,38 @@ class RewardManager:
             std_window = 24
         if std_window < 2:
             logger.warning(f"performance_config.std_window={std_window} 不足2，无法计算标准差，使用 mean=0 std=1")
-            mean_list = [0.0, 0.0, 0.0, 0.0]
-            std_list = [1.0, 1.0, 1.0, 1.0]
+            mean_list = [0.0] * NUM_PERFORMANCE_INDICATORS
+            std_list = [1.0] * NUM_PERFORMANCE_INDICATORS
         else:
             # 纵向：收集过去 std_window 期内所有记录的各指标值（不包含当前 (year, month)）
-            performance_list = [[] for _ in range(4)]
+            performance_list = [[] for _ in range(NUM_PERFORMANCE_INDICATORS)]
             for i in range(1, std_window + 1):
                 y, m = AGENT_DATA_ADAPTER._roll_year_month((year, month), -i)
                 for k, rec in self._record.items():
                     if (k[0], k[1]) != (y, m):
                         continue
                     perf = rec.get('performance')
-                    if perf and len(perf) >= 4:
-                        for j in range(4):
+                    if perf and len(perf) >= NUM_PERFORMANCE_INDICATORS:
+                        for j in range(NUM_PERFORMANCE_INDICATORS):
                             performance_list[j].append(perf[j])
 
-            if (
-                len(performance_list[0]) < 2 or len(performance_list[1]) < 2 or
-                len(performance_list[2]) < 2 or len(performance_list[3]) < 2
-            ):
+            if any(len(performance_list[j]) < 2 for j in range(NUM_PERFORMANCE_INDICATORS)):
                 logger.warning(
-                    f"纵向窗口内样本数不足2 (rtr={len(performance_list[0])}, vol={len(performance_list[1])}, "
-                    f"sharpe={len(performance_list[2])}, max_dd={len(performance_list[3])})，使用 mean=0 std=1"
+                    f"纵向窗口内样本数不足2，各指标样本数: {[len(performance_list[j]) for j in range(NUM_PERFORMANCE_INDICATORS)]}，使用 mean=0 std=1"
                 )
-                mean_list = [0.0, 0.0, 0.0, 0.0]
-                std_list = [1.0, 1.0, 1.0, 1.0]
+                mean_list = [0.0] * NUM_PERFORMANCE_INDICATORS
+                std_list = [1.0] * NUM_PERFORMANCE_INDICATORS
             else:
-                mean_list = [float(np.mean(performance_list[i])) for i in range(4)]
+                mean_list = [float(np.mean(performance_list[i])) for i in range(NUM_PERFORMANCE_INDICATORS)]
                 std_floor = self._performance_config.get('std_floor', 0.01)
                 std_list = [
                     max(float(np.std(performance_list[i]) + 1e-6), std_floor)
-                    for i in range(4)
+                    for i in range(NUM_PERFORMANCE_INDICATORS)
                 ]
 
         normalized_performance = [
             (portfolio_performance_record[i] - mean_list[i]) / std_list[i]
-            for i in range(4)
+            for i in range(NUM_PERFORMANCE_INDICATORS)
         ]
         # 标准化结果若为 NaN/Inf，用 0 填充，避免传播到 reward 与后续期
         normalized_performance = [
@@ -336,10 +355,10 @@ class RewardManager:
             return 0.0
 
         # 计算奖励（按固定顺序取权重，与 normalized_performance 一一对应）
-        if len(normalized_performance) != 4:
-            logger.warning(f"normalized_performance 长度非 4: {key}")
+        if len(normalized_performance) != NUM_PERFORMANCE_INDICATORS:
+            logger.warning(f"normalized_performance 长度非 {NUM_PERFORMANCE_INDICATORS}: {key}")
             return 0.0
-        weight_list = [self._reward_weights.get(k, 0.0) for k in ('rtr', 'vol', 'sharpe', 'max_drawdown')]
+        weight_list = [self._reward_weights.get(k, 0.0) for k in PERFORMANCE_INDICATOR_KEYS]
         reward = sum(w * (r if np.isfinite(r) else 0.0) for w, r in zip(normalized_performance, weight_list))
 
         # 记录
@@ -490,7 +509,7 @@ class RewardManager:
         输入：
         - year: 年份
         - month: 月份
-        输出：增量记录 dict，key 为 (year, month, portfolio)，value 为 {decision_weights, performance: [rtr, vol, sharpe, max_drawdown], reward?}
+        输出：增量记录 dict，key 为 (year, month, portfolio)，value 为 {decision_weights, performance: [rtr, vol, sharpe, max_drawdown, diversification], reward?}
 
         增量为上一次 _snapshot_progress 到当前 (year, month) 的差集（不包含上次的 year_month）。
         返回前会裁剪 _record（保留期数 = max(m, std_window)+1，且不删未保存的）。

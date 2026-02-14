@@ -46,21 +46,21 @@ class LSTM(nn.Module):
         )
         out_size = hidden_size * (2 if bidirectional else 1)
         self.fc = nn.Linear(out_size, self.output_dim)
-        self.activation = nn.ReLU()
+        self.activation = nn.Tanh()
         self._dropout = nn.Dropout(dropout) if dropout and dropout > 0 else None
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: (..., n, m, mask_len) -> (batch, seq_len=mask_len, input_size=n*m)
         batch_shape = x.shape[:-3]
         x = x.reshape(-1, self.mask_len, self.n * self.m)
-
+        
         out, _ = self.lstm(x)  # (batch, mask_len, hidden*dir)
         x = out[:, -1, :]  # 取最后时间步 (batch, hidden*dir)
         if self._dropout is not None:
             x = self._dropout(x)
         x = self.fc(x)
         x = self.activation(x)
-        x = two_step_normalize(x, short_limit=self.short_limit)
+        x = torch.stack([two_step_normalize(x[i], short_limit=self.short_limit) for i in range(x.shape[0])])
 
         if batch_shape:
             x = x.reshape(*batch_shape, self.output_dim)
