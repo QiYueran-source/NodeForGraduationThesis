@@ -451,7 +451,35 @@ class RewardManager:
         self.calc_all_reward(year, month, portfolios)
         return True
 
-    # =============== 保存接口 ===============  
+    # =============== 保存接口 ===============
+    def _prune_record(self, current_ym: Tuple[int, int]) -> None:
+        """
+        裁剪 _record：只保留「两个边界取早的那个」之后的数据，避免内存无限增长。
+        - reward 边界：current_ym 往前 retain 期（归一化/上一期权重需要），retain = max(m, std_window) + 1。
+        - saver 边界：_snapshot_progress（已交过快照的截止），不能删未保存的。
+        删除 (y, m) 严格早于 min(keep_after, _snapshot_progress) 的 key。
+        """
+        tc = DATA_CACHE_POOL.get_train_config() or {}
+        m = int(tc.get("m", 1))
+        std_window = self._performance_config.get("std_window") or 24
+        retain = max(m, std_window) + 1
+        keep_after = AGENT_DATA_ADAPTER._roll_year_month(current_ym, -retain)
+        yp, mp = self._snapshot_progress
+        # 取更早的作为删除线：只删严格早于该线的 (y,m)
+        if AGENT_DATA_ADAPTER._year_month_greater((yp, mp), keep_after):
+            cutoff = keep_after
+        else:
+            cutoff = (yp, mp)
+        with self._record_lock:
+            to_drop = [
+                k for k in self._record.keys()
+                if AGENT_DATA_ADAPTER._year_month_greater(cutoff, (k[0], k[1]))
+            ]
+            for k in to_drop:
+                del self._record[k]
+            if to_drop:
+                logger.debug(f"_prune_record: 删除 {len(to_drop)} 条, cutoff={cutoff}")
+
     def get_incremental_snapshot(self, year: int, month: int) -> Dict[Tuple[int, int, Tuple[str]], Dict]:
         """获取增量快照
         输入：
@@ -460,6 +488,7 @@ class RewardManager:
         输出：增量记录 dict，key 为 (year, month, portfolio)，value 为 {decision_weights, performance: [rtr, vol, sharpe, max_drawdown], reward?}
 
         增量为上一次 _snapshot_progress 到当前 (year, month) 的差集（不包含上次的 year_month）。
+        返回前会裁剪 _record（保留期数 = max(m, std_window)+1，且不删未保存的）。
         """
         yp, mp = self._snapshot_progress
 
@@ -471,6 +500,7 @@ class RewardManager:
         incremental_record_dict = {k: self._record[k] for k in incremental_record_keys}
 
         self._snapshot_progress = (year, month)
+        self._prune_record((year, month))
         return incremental_record_dict
 
 

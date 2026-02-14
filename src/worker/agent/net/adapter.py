@@ -10,6 +10,8 @@ import torch
 # 组件
 from src.worker.cache import DATA_CACHE_POOL 
 from src.worker.agent.net.mlp import MLP
+from src.worker.agent.net.tcn import TCN
+from src.worker.agent.net.lstm import LSTM
 
 # 日志
 from src.utils.logger import get_module_logger
@@ -49,20 +51,40 @@ class NetAdapter:
     def _set_model(self):
         """
         设置模型
-        cate: 模型类别  
-        - 0: mlp1
+        cate: 模型类别
+        - 0: MLP
+        - 1: TCN
+        - 2: LSTM
         """
         if self.cate == 0:
             self._model = MLP(
-                self.n, 
-                self.m, 
-                self.mask_len, 
-                self.dropout, 
-                self.short_limit, 
+                self.n,
+                self.m,
+                self.mask_len,
+                self.dropout,
+                self.short_limit,
+                **self.config
+            )
+        elif self.cate == 1:
+            self._model = TCN(
+                self.n,
+                self.m,
+                self.mask_len,
+                self.dropout,
+                self.short_limit,
+                **self.config
+            )
+        elif self.cate == 2:
+            self._model = LSTM(
+                self.n,
+                self.m,
+                self.mask_len,
+                self.dropout,
+                self.short_limit,
                 **self.config
             )
         else:
-            raise
+            raise ValueError(f"不支持的 model_config.cate: {self.cate}")
 
     def _to_device(self):
         """

@@ -11,6 +11,7 @@ import gymnasium as gym
 from src.worker.cache.pool import DATA_CACHE_POOL
 from src.worker.agent.data.adapter import AGENT_DATA_ADAPTER
 from src.worker.agent.env.reward import REWARD_MANAGER
+from src.worker.agent.utils.math import two_step_normalize_np
 
 # 日志
 from src.utils.logger import get_module_logger
@@ -32,6 +33,7 @@ class RollingEnv(gym.Env):
         self.seed = int(tc.get("seed", 42))
         box_min = float(ec.get("box_min", 0.0))
         box_max = float(ec.get("box_max", 1.0))
+        self.short_limit = float(DATA_CACHE_POOL.get_short_limit() or ec.get("short_limit") or 0.0)
 
         # obs 三维，展平由网络实现
         self.observation_space = gym.spaces.Box(
@@ -151,19 +153,15 @@ class RollingEnv(gym.Env):
             action = np.ones(self.n + 1, dtype=np.float64) / (self.n + 1)
             logger.warning("action 含 NaN，已替换为等权重")
 
-        # 用 softmax 归一化，避免 action_sum 为 0 或 NaN 时除零；极端情况 fallback 等权
+        # 用两段归一化（与 net 一致），和不为 1 或非有限时归一化；极端情况 fallback 等权
         action = np.asarray(action, dtype=np.float64)
         action_sum = float(action.sum())
         if action_sum > 1.0 + 1e-3 or action_sum < 1.0 - 1e-3 or not np.isfinite(action_sum):
-            logger.warning("action 和不为1或非有限，进行 softmax 归一化")
-            x = np.clip(action, -50.0, 50.0)
-            exp_x = np.exp(x)
-            s = exp_x.sum()
-            if s > 1e-10 and np.isfinite(s):
-                action = exp_x / s
-            else:
+            logger.info("action 和不为1或非有限，进行两段归一化")
+            action = two_step_normalize_np(action, self.short_limit)
+            if not np.isfinite(action).all() or abs(float(action.sum()) - 1.0) > 1e-3:
                 action = np.ones(self.n + 1, dtype=np.float64) / (self.n + 1)
-                logger.warning("softmax 分母过小或非有限，已替换为等权重")
+                logger.info("两段归一化结果异常，已替换为等权重")
         action = tuple(action.tolist())
 
         # 计算表现
