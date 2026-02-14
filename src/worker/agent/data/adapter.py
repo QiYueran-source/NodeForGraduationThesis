@@ -140,9 +140,9 @@ class AgentDataAdapter:
 
     def _set_current_year_month(self):
         """
-        初始化/对齐当前窗口并写入 record：default=(start_year-1,1) 与 m 对齐取较晚者。
+        初始化/对齐当前窗口并写入 record：default=(start_year, 1)，与 earliest_available（满足 m 期 lookback）取较晚者。
         """
-        default_start_year_month = (self.start_year - 1, 1)
+        default_start_year_month = (self.start_year, 1)
         m = self.train_config.get('m', 1)
         earliest_available_year_month = self._roll_year_month(self.earliest_year_month, m - 1)
         if AgentDataAdapter._year_month_greater(earliest_available_year_month, default_start_year_month):
