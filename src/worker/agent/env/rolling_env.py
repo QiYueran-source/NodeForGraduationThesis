@@ -1,6 +1,6 @@
 """
-滚动窗口 Gym 环境：一组合一局，obs = (n, m, mask_len)，action = (n+1)。
-reset 返回下一组合的观测；step 内在线计算 reward 并结束本局。
+滚动窗口 Gym 环境：一组合一局，obs = (n, m, mask_len+1)，action = (n+1)。
+最后一维含因子 mask_len 维 + 1 维组合收益率（缺失填 0）。reset 返回下一组合的观测；step 内在线计算 reward 并结束本局。
 """
 # 库
 from typing import Tuple, Optional
@@ -19,7 +19,7 @@ logger = get_module_logger(__name__, prefix="[RollingEnv]")
 
 
 class RollingEnv(gym.Env):
-    """一组合一局：obs=(n,m,mask_len)，action=(n+1)；step 内在线算 reward 并结束本局。"""
+    """一组合一局：obs=(n,m,mask_len+1)，action=(n+1)；step 内在线算 reward 并结束本局。"""
 
     def __init__(self):
         super().__init__()
@@ -30,6 +30,7 @@ class RollingEnv(gym.Env):
         self.n = int(DATA_CACHE_POOL.get_n() or 1)  # 每个组合标的数（固定，meta 顶层）
         self.m = int(tc.get("m", 1))  # 回看期数
         self.mask_len = int(tc.get("mask_len", 60))
+        self.feature_dim = self.mask_len + 1  # 因子 + 1 维组合收益率
         self.seed = int(tc.get("seed", 42))
         box_min = float(ec.get("box_min", 0.0))
         box_max = float(ec.get("box_max", 1.0))
@@ -37,25 +38,38 @@ class RollingEnv(gym.Env):
 
         # obs 三维，展平由网络实现
         self.observation_space = gym.spaces.Box(
-            low=-np.inf, high=np.inf, shape=(self.n, self.m, self.mask_len), dtype=np.float32
+            low=-np.inf, high=np.inf, shape=(self.n, self.m, self.feature_dim), dtype=np.float32
         )
         self.action_space = gym.spaces.Box(
             low=box_min, high=box_max, shape=(self.n + 1,), dtype=np.float32
         )
 
         # 占位零观测（本局结束或无组合时返回，只读勿改）
-        self._zero_obs = np.zeros((self.n, self.m, self.mask_len), dtype=np.float32)
+        self._zero_obs = np.zeros((self.n, self.m, self.feature_dim), dtype=np.float32)
         # 当前 obs 对应的组合，下次 step(action) 时用
         self._pending_portfolio = None
 
     def _get_obs(self, portfolio) -> np.ndarray:
-        """返回该组合的因子 (n, m, mask_len)，不展平。"""
+        """返回该组合的观测 (n, m, mask_len+1)：因子 + 组合收益率序列（缺失填 0），不展平。"""
         if portfolio is None or len(portfolio) == 0:
-            return np.zeros((self.n, self.m, self.mask_len), dtype=np.float32)
+            return self._zero_obs.copy()
         t = AGENT_DATA_ADAPTER.win_get_factors_tensor(tuple(portfolio))
         if t.numel() == 0:
-            return np.zeros((self.n, self.m, self.mask_len), dtype=np.float32)
-        obs = t.numpy().astype(np.float32)
+            return self._zero_obs.copy()
+        factors = t.numpy().astype(np.float32)  # (n, m, mask_len)
+
+        # 获取组合收益率序列，缺失位置填 0
+        rtr_series = AGENT_DATA_ADAPTER.win_get_rtr_series(tuple(portfolio))  # (m,) object，可能含 None
+        if rtr_series.size != self.m:
+            rtr_arr = np.zeros(self.m, dtype=np.float32)
+        else:
+            rtr_arr = np.array(
+                [0.0 if x is None else float(x) for x in rtr_series],
+                dtype=np.float32
+            )
+        # broadcast (m,) -> (n, m, 1)，再与因子在最后一维拼接
+        rtr_expanded = np.broadcast_to(rtr_arr.reshape(1, self.m, 1), (self.n, self.m, 1))
+        obs = np.concatenate([factors, rtr_expanded], axis=-1)  # (n, m, feature_dim)
         if np.any(np.isnan(obs)):
             logger.warning("obs 中含 NaN, portfolio=%s", portfolio)
         return obs
