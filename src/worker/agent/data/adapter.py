@@ -1,14 +1,15 @@
 """
 数据适配器，使用AgentDataFetcher获取数据，并转换为Agent可以使用的格式  
 """
-# 库 
-import torch 
-import math  
+# 库
+import numpy as np
+import torch
+import math
 import time
-import datetime as dt 
+import datetime as dt
 import threading
-import yaml  
-import random 
+import yaml
+import random
 from typing import Any, Tuple, List, Optional
 
 # 组件 
@@ -371,7 +372,17 @@ class AgentDataAdapter:
         rtr_tuple.append(perf.get('risk_free_rate', 0.02))
         logger.debug(f"获取{self.win_get_current_year_month()}训练窗口的收益率,长度: {len(rtr_tuple)}")
         return tuple(rtr_tuple)
-        
+
+    def win_get_rtr_series(self, portfolio: Tuple[str]) -> np.ndarray:
+        """
+        获取当前训练窗口下该组合的 m 期组合收益率序列（与 reward 计算 vol/mdd 的序列一致）。
+        返回 shape (m,) 的 object 数组，顺序与 win_get_factors_tensor 的时间维一致：
+        index 0 = 当前期，index 1 = 上一期，…；缺失的期在对应位置为 None。
+        """
+        from src.worker.agent.env.reward import REWARD_MANAGER
+        year, month = self.win_get_current_year_month()
+        return REWARD_MANAGER.get_portfolio_return_series(year, month, portfolio)
+
 
         
 AGENT_DATA_ADAPTER = AgentDataAdapter()

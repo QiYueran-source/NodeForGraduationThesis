@@ -267,6 +267,40 @@ class RewardManager:
             return None
         return tuple(float(x) for x in dw)
 
+    def get_portfolio_return_series(self, year: int, month: int, portfolio: Tuple[str]) -> np.ndarray:
+        """
+        获取当前窗口下该组合的 m 期组合收益率序列（与计算 vol/sharpe/max_drawdown 的序列一致）。
+        顺序：index 0 = 当前期，index 1 = 上一期，…，index m-1 = 往前第 m-1 期。
+        缺失的期在对应位置填 None，不因单期缺失而整体返回 None。
+        返回：shape (m,) 的 object 数组，元素为 float 或 None。
+        """
+        m = self._m
+        if m <= 0:
+            return np.array([], dtype=object)
+        n = len(portfolio)
+        res = np.empty(m, dtype=object)
+        for i in range(m):
+            y, mo = AGENT_DATA_ADAPTER._roll_year_month((year, month), -i)
+            if i == 0:
+                return_tuple = AGENT_DATA_ADAPTER.win_get_rtr(portfolio)
+                if not return_tuple or len(return_tuple) != n + 1:
+                    res[0] = None
+                    continue
+                prev_weights = self.get_previous_decision_weights(year, month, portfolio)
+                if prev_weights is None:
+                    prev_weights = tuple(1.0 / (n + 1) for _ in range(n + 1))
+                res[0] = self._calculate_weighted_return(return_tuple, prev_weights)
+            else:
+                key = (y, mo, portfolio)
+                with self._record_lock:
+                    rec = self._record.get(key, {})
+                perf = rec.get("performance")
+                if not perf or len(perf) < 1:
+                    res[i] = None
+                else:
+                    res[i] = float(perf[0])
+        return res
+
     def normalize_portfolio_performance(self, year:int, month:int, portfolio: Tuple[str]) -> Optional[List[float]]:
         """归一化组合表现（纵向/滚动窗口标准化，便于在线计算奖励）
 
