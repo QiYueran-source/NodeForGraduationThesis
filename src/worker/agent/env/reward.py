@@ -43,8 +43,12 @@ class RewardManager:
         # 表现配置 
         self._performance_config = DATA_CACHE_POOL.get_performance_config() or {}
 
+        # 回看期数 m：vol/sharpe/max_drawdown 的滚动窗口统一为 m，不再使用 performance_config 的 rolling_window / max_drawdown_window
+        tc = DATA_CACHE_POOL.get_train_config() or {}
+        self._m = int(tc.get('m', 1))
+
         # 奖励配置（来自 train_config，结构见 pool.py 顶部【train_config = 随机】）
-        self._reward_config = (DATA_CACHE_POOL.get_train_config() or {}).get('reward_config', {}) or {}
+        self._reward_config = tc.get('reward_config', {}) or {}
         self._reward_weights = self._reward_config.get('reward_weights', {})
 
         # 锁 
@@ -94,8 +98,8 @@ class RewardManager:
         if len(return_series) <= 1:
             logger.warning(f"收益率序列长度小于等于1，无法计算波动率")
             return 0.0
-        if len(return_series) < self._performance_config.get('rolling_window', 24):
-            logger.warning(f"收益率序列长度小于波动率窗口期数: {len(return_series)} < {self._performance_config.get('rolling_window', 24)}")
+        if len(return_series) < self._m:
+            logger.warning(f"收益率序列长度小于波动率窗口期数 m: {len(return_series)} < {self._m}")
         return np.std(return_series)
     
     def _calculate_sharpe_ratio(self, return_series: List[float]) -> float:
@@ -109,8 +113,8 @@ class RewardManager:
         if len(return_series) <= 1:
             logger.warning(f"收益率序列长度小于等于1，无法计算夏普比率")
             return 0.0
-        if len(return_series) < self._performance_config.get('rolling_window', 24):  
-            logger.warning(f"计算夏普时，收益率序列长度小于波动率窗口期数: {len(return_series)} < {self._performance_config.get('rolling_window', 24)}")
+        if len(return_series) < self._m:
+            logger.warning(f"计算夏普时，收益率序列长度小于窗口期数 m: {len(return_series)} < {self._m}")
         return (np.mean(return_series) - risk_free_rate) / (np.std(return_series) + 1e-6) # 避免除0   
     
     def _calculate_max_drawdown(self, return_series: List[float]) -> float:
@@ -122,8 +126,8 @@ class RewardManager:
         if len(return_series) <= 1:
             logger.warning(f"收益率序列长度为1，无法计算最大回撤，返回0")  
             return 0.0
-        if len(return_series) < self._performance_config.get('max_drawdown_window', 24):
-            logger.warning(f"收益率序列长度小于最大回撤窗口期数: {len(return_series)} < {self._performance_config.get('max_drawdown_window', 24)}")
+        if len(return_series) < self._m:
+            logger.warning(f"收益率序列长度小于最大回撤窗口期数 m: {len(return_series)} < {self._m}")
 
         # 累计净值：wealth[0] = 1 * (1 + r_0), wealth[i] = wealth[i-1] * (1 + r_i)
         wealth = 1.0
@@ -204,11 +208,10 @@ class RewardManager:
         rtr = self._calculate_weighted_return(return_tuple, decision_weights)
         performance.append(rtr)
         
-        # 获取滚动窗口期收益率序列（从当前期rtr开始，往前rolling_window期）
+        # 获取滚动窗口期收益率序列（从当前期 rtr 开始，往前 m 期，窗口长度 = train_config.m）
         portfolio_return_series_for_rolling = [rtr]
         failed_periods = []
-        rolling_window = self._performance_config.get('rolling_window', 24)
-        for i in range(1, rolling_window):
+        for i in range(1, self._m):
             y, m = AGENT_DATA_ADAPTER._roll_year_month((year, month), -i)
             past = self._record.get((y, m, portfolio), {})
             perf = past.get('performance')

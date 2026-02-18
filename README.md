@@ -33,8 +33,8 @@
             - dropout:  dropout率  
             - config: 具体模型参数(不同模型不同参数)
         - performance_config: # 表现计算配置  
-            - risk_free_rate: 无风险利率   
-            - rolling_window: 滚动窗口期数  
+- risk_free_rate: 无风险利率
+        - （vol/sharpe/max_drawdown 的滚动窗口与 train_config.m 一致，不再单独配置 rolling_window）
         - reward_config: 奖励配置   
             - reward_weights: 奖励权重
                 - rtr: 收益率权重   

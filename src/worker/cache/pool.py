@@ -22,7 +22,7 @@ meta：由主机提供，结构见下。约定：顶层 = 固定（环境统一�
     - sample_and_shuffle_seed: 采样与滚窗打乱种子；设后所有容器组合采样顺序、每窗口 shuffle 顺序一致，可复现
 - performance_config: 表现计算配置
     - risk_free_rate: 无风险利率
-    - rolling_window: 滚动窗口期数
+    - （vol/sharpe/max_drawdown 的滚动窗口已统一为 train_config.m，不再使用 rolling_window / max_drawdown_window）
     - std_window: 标准化窗口期数
 【train_config = 随机】
 - seed: 随机种子
@@ -67,7 +67,7 @@ class DataCachePool:
             'n': None,  # 固定，顶层。一个组合中的证券数量（算上现金共 n+1 个）
             'max_portfolios_num': None,  # 固定，顶层。可构建组合数上限
             'env_config': None,  # 固定，顶层。含 rf_end_year
-            'performance_config': None,  # 固定，顶层。含 risk_free_rate、rolling_window
+            'performance_config': None,  # 固定，顶层。含 risk_free_rate；vol/sharpe/mdd 窗口用 train_config.m
             'factors_list': [
                                 'absacc', 'acc', 'accp', 'ag', 'am', 'ato',
                                 'beta', 'betad', 'betasq', 'bm', 'bm_ia', 'bveg',
@@ -328,12 +328,12 @@ class DataCachePool:
             self._meta['env_config'] = config
 
     def put_performance_config(self, config: Dict):
-        """设置表现计算配置（固定，meta 顶层。含 risk_free_rate、rolling_window）"""
+        """设置表现计算配置（固定，meta 顶层。含 risk_free_rate；vol/sharpe/mdd 窗口用 train_config.m）"""
         with self._meta_lock:
             self._meta['performance_config'] = config
     
     def get_performance_config(self) -> Optional[Dict]:
-        """获取表现计算配置（固定，meta 顶层。含 risk_free_rate、rolling_window）"""
+        """获取表现计算配置（固定，meta 顶层。含 risk_free_rate；vol/sharpe/mdd 窗口用 train_config.m）"""
         with self._meta_lock:
             return self._meta.get('performance_config')
     

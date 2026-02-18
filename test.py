@@ -1,6 +1,6 @@
 """
-测试奖励计算链路：测试期 202307~202312，rolling_window=6。
-为 202307~202312 提供模拟收益率；仅对 202312 计算 vol/sharpe/回撤，并测试标准化。
+测试奖励计算链路：测试期 202307~202312，窗口 m=6。
+为 202307~202312 提供模拟收益率；仅对 202312 计算 vol/sharpe/回撤（窗口 = train_config.m），并测试标准化。
 """
 import json
 import random
@@ -18,24 +18,24 @@ DATA_CACHE_POOL.put_stock_list(["000001", "000002", "000003", "000004", "000005"
 DATA_CACHE_POOL.put_train_config({
     "n": 2,
     "max_portfolios_num": 10,
-    "m": 1,
+    "m": 6,  # 回看期数，vol/sharpe/max_drawdown 窗口 = m
     "reward_config": {"reward_weights": {"rtr": 0.25, "vol": 0.25, "sharpe": 0.25, "max_drawdown": 0.25}},
 })
 DATA_CACHE_POOL.put_earliest_year_month(2020, 1)
 DATA_CACHE_POOL.put_performance_config({
     "risk_free_rate": 0.02,
-    "rolling_window": 6,  # 6 期滚动，仅对 202312 计算 vol/sharpe/max_drawdown
 })
 
-# 再导入 RewardManager、适配器、Saver
+# 再导入 RewardManager、适配器、Saver（导入时 RewardManager 从 DATA_CACHE_POOL 读 train_config.m）
 from src.worker.agent.data.adapter import AGENT_DATA_ADAPTER
+from src.worker.agent.env import REWARD_MANAGER
 from src.worker.save.saver import Saver
 
 
-# 测试期：202307 ~ 202312
+# 测试期：202307 ~ 202312；vol/sharpe/回撤窗口 = train_config.m
 TEST_START_YEAR, TEST_START_MONTH = 2023, 7
 TEST_END_YEAR, TEST_END_MONTH = 2023, 12
-ROLLING_WINDOW = 6
+WINDOW_M = 6  # 与 put_train_config 中 m 一致
 
 
 def _roll_year_month(year: int, month: int, delta: int):
@@ -60,7 +60,7 @@ def _inject_returns_202307_to_202311(portfolios: list, seed: int = 42):
     """
     rng = random.Random(seed)
     # 202307, 202308, 202309, 202310, 202311 共 5 期
-    for i in range(1, ROLLING_WINDOW):  # 1..5 -> 往前 5 期
+    for i in range(1, WINDOW_M):  # 1..5 -> 往前 5 期
         y, m = _roll_year_month(TEST_END_YEAR, TEST_END_MONTH, -i)
         for p in portfolios:
             rtr = round(0.01 + (rng.random() - 0.5) * 0.04, 2)  # 约 -1% ~ 3%，保留两位小数
@@ -150,7 +150,7 @@ def test_reward_calculation_flow():
     assert current_count == 3, f"当前窗口 202312 应有 3 条，实际 {current_count} 条"
 
     print("test_reward_calculation_flow 通过")
-    print(f"  测试期: {TEST_START_YEAR}{TEST_START_MONTH:02d}~{TEST_END_YEAR}{TEST_END_MONTH:02d}, rolling_window={ROLLING_WINDOW}")
+    print(f"  测试期: {TEST_START_YEAR}{TEST_START_MONTH:02d}~{TEST_END_YEAR}{TEST_END_MONTH:02d}, m={WINDOW_M}")
     print(f"  仅对 {year}{month:02d} 计算 vol/sharpe/回撤并完成标准化")
     print(f"  记录: {record_path}, 总条数={len(lines)}, 当前窗口条数=3")
 
