@@ -29,6 +29,7 @@ class NetAdapter:
         self.n = DATA_CACHE_POOL.get_n() or 1
         self.short_limit = DATA_CACHE_POOL.get_short_limit() or 0.0
         self.mask_len = tc.get('mask_len', 60)
+        self.feature_dim = self.mask_len + 1  # 因子维 + 1 维组合收益率，与 env obs 最后一维一致
         self.model_config = tc.get('model_config', {})
 
         # 模型配置
@@ -60,7 +61,7 @@ class NetAdapter:
             self._model = MLP(
                 self.n,
                 self.m,
-                self.mask_len,
+                self.feature_dim,
                 self.dropout,
                 self.short_limit,
                 **self.config
@@ -69,7 +70,7 @@ class NetAdapter:
             self._model = TCN(
                 self.n,
                 self.m,
-                self.mask_len,
+                self.feature_dim,
                 self.dropout,
                 self.short_limit,
                 **self.config
@@ -78,7 +79,7 @@ class NetAdapter:
             self._model = LSTM(
                 self.n,
                 self.m,
-                self.mask_len,
+                self.feature_dim,
                 self.dropout,
                 self.short_limit,
                 **self.config
@@ -94,14 +95,14 @@ class NetAdapter:
         if self.device.type == 'cuda':
             logger.info("使用cuda")
 
-    def act(self, obs:torch.Tensor)->torch.Tensor:
+    def act(self, obs: torch.Tensor) -> torch.Tensor:
         """
         动作
-        obs: 观测(m,n,mask_len)维度tensor  
+        obs: 观测 (n, m, feature_dim) 维度 tensor，feature_dim = mask_len + 1
         """
-        if obs.dim() != 3 or obs.shape[0] != self.n or obs.shape[1] != self.m or obs.shape[2] != self.mask_len:
-            logger.error(f"观测维度错误，期望{(self.m,self.n,self.mask_len)}，实际{obs.shape}")
-            raise 
+        if obs.dim() != 3 or obs.shape[0] != self.n or obs.shape[1] != self.m or obs.shape[2] != self.feature_dim:
+            logger.error(f"观测维度错误，期望 (n={self.n}, m={self.m}, feature_dim={self.feature_dim})，实际 {obs.shape}")
+            raise ValueError("obs shape mismatch")
         return self._model(obs)
 
     def get_checkpoint(self) -> dict:
@@ -117,13 +118,13 @@ class NetAdapter:
         """返回模型（只读）。"""
         return self._model
 
-    def __call__(self, obs:torch.Tensor)->torch.Tensor:
+    def __call__(self, obs: torch.Tensor) -> torch.Tensor:
         """
-        调用模型，返回动作  
-        输入：  
-        obs: 观测(m,n,mask_len)维度tensor     
-        输出： 
-        - action: 动作，(n+1)维的权重向量，和为1    
+        调用模型，返回动作
+        输入：
+        obs: 观测 (n, m, feature_dim) 维度 tensor，feature_dim = mask_len + 1
+        输出：
+        - action: 动作，(n+1) 维的权重向量，和为 1
         """
         return self._model(obs)
     
