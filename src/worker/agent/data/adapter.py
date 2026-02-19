@@ -375,9 +375,9 @@ class AgentDataAdapter:
 
     def win_get_rtr_series(self, portfolio: Tuple[str]) -> np.ndarray:
         """
-        获取当前训练窗口下该组合的 m 期组合收益率序列（与 reward 计算 vol/mdd 的序列一致）。
-        返回 shape (m,) 的 object 数组，顺序与 win_get_factors_tensor 的时间维一致：
-        index 0 = 当前期，index 1 = 上一期，…；缺失的期在对应位置为 None。
+        获取当前训练窗口下该组合「已实现」的 m 期组合收益率序列，仅用于 obs 特征。
+        不包含当前期下一期收益，避免信息泄露。顺序：index 0 = 上一期，index 1 = 上上期，…，index m-1 = 往前第 m 期。
+        返回 shape (m,) 的 object 数组，缺失的期在对应位置为 None。
         """
         from src.worker.agent.env.reward import REWARD_MANAGER
         year, month = self.win_get_current_year_month()
