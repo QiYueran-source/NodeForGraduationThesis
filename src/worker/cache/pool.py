@@ -23,6 +23,7 @@ meta：由主机提供，结构见下。约定：顶层 = 固定（环境统一�
     - retrain_times: 同一窗口重复训练轮数，默认 1；>1 时本窗口组合用尽后重置游标并打乱再扫一轮，满轮后再滚窗
 - performance_config: 表现计算配置
     - risk_free_rate: 无风险利率
+    - classic_utility: 若为 True，奖励用博迪效用 U=μ-(A/2)σ²；否则用 reward_weights 加权归一化指标
     - （vol/sharpe/max_drawdown 的滚动窗口已统一为 train_config.m，不再使用 rolling_window / max_drawdown_window）
     - std_window: 标准化窗口期数
 【train_config = 随机】
@@ -31,7 +32,7 @@ meta：由主机提供，结构见下。约定：顶层 = 固定（环境统一�
 - mask_len: 因子掩码长度，默认60
 - model_config: 模型配置（cate/dropout/config；设备有 GPU 则用 cuda，否则 cpu）
 - reinforcement_config: 强化学习配置（rl_config/cate/opt: lr/clip_grad_norm/weight_decay）
-- reward_config: 奖励配置（reward_weights: rtr/vol/sharpe/max_drawdown）
+- reward_config: 奖励配置（reward_weights: rtr/vol/sharpe/max_drawdown；classic_utility 为 True 时用 A 作为风险厌恶系数，可随机初始化）
 
 record: 由节点维护  
 - running: 是否正在运行    

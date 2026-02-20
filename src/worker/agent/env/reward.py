@@ -369,6 +369,9 @@ class RewardManager:
         - month: 月份
         - portfolio: 组合
         输出：奖励
+
+        若 performance_config.classic_utility 为 True，使用博迪效用 U = μ - (A/2)σ²，
+        其中 μ=rtr、σ=vol 从 performance 取，A 从 reward_config.A 取（默认 2）；否则按归一化表现加权求和。
         """
         key = (year, month, portfolio)
         portfolio_record = self._record.get(key, {})
@@ -376,20 +379,35 @@ class RewardManager:
             logger.warning(f"组合{portfolio}在{year}年{month}月没有记录，无法计算奖励")
             return 0.0
 
-        # 获取归一化表现
+        # 博迪效用分支：U = μ - (A/2)σ²，不跳过归一化（normalized_performance 仍会写入，供下游解析）
+        if self._performance_config.get('classic_utility') is True:
+            perf = portfolio_record.get('performance', [])
+            if len(perf) < 2:
+                logger.warning(f"组合{portfolio}在{year}年{month}月 performance 不足 2 项，无法计算博迪效用奖励")
+                return 0.0
+            rtr = float(perf[0]) if np.isfinite(perf[0]) else 0.0
+            vol = float(-perf[1]) if np.isfinite(perf[1]) else 0.0  # 当前存的是 -vol
+            A = float(self._reward_config.get('A', 2.0))
+            if A < 0:
+                A = 2.0
+            reward = rtr - (A / 2.0) * (vol ** 2)
+            reward = float(reward) if np.isfinite(reward) else 0.0
+            with self._record_lock:
+                self._record[key]['reward'] = reward
+                logger.debug(f"保存奖励(博迪效用): {key}, reward={reward}, rtr={rtr}, vol={vol}, A={A}")
+            return reward
+
+        # 默认：按归一化表现加权求和
         normalized_performance = portfolio_record.get('normalized_performance', [])
         if not normalized_performance:
             logger.warning(f"组合{portfolio}在{year}年{month}月没有归一化表现，无法计算奖励")
             return 0.0
-
-        # 计算奖励（按固定顺序取权重，与 normalized_performance 一一对应）
         if len(normalized_performance) != NUM_PERFORMANCE_INDICATORS:
             logger.warning(f"normalized_performance 长度非 {NUM_PERFORMANCE_INDICATORS}: {key}")
             return 0.0
         weight_list = [self._reward_weights.get(k, 0.0) for k in PERFORMANCE_INDICATOR_KEYS]
         reward = sum(w * (r if np.isfinite(r) else 0.0) for w, r in zip(normalized_performance, weight_list))
 
-        # 记录
         with self._record_lock:
             self._record[key]['reward'] = reward
             logger.debug(f"保存奖励: {key}, {reward}")
