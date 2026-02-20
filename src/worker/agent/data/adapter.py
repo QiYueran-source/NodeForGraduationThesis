@@ -47,9 +47,11 @@ class AgentDataAdapter:
         self._data_pool_lock = threading.Lock() # 保护数据池的锁  
         self._portfolio_pool_lock = threading.Lock() # 保护组合池的锁  
 
-        # 采样与 shuffle 种子（env_config.sample_and_shuffle_seed 优先，否则用 train_config.seed 默认 42）
+        # 采样与 shuffle 种子、同一窗口多轮训练
         env_config = DATA_CACHE_POOL.get_env_config() or {}
         self._sample_and_shuffle_seed = env_config.get('sample_and_shuffle_seed')
+        self._retrain_times = int(env_config.get('retrain_times', 1))
+        self._retrain_cursor = 0  # 当前窗口已训练轮数，由 win_roll 根据其与 _retrain_times 决定重置还是滚窗
         self._effective_sample_seed = (
             self._sample_and_shuffle_seed
             if self._sample_and_shuffle_seed is not None
@@ -270,33 +272,37 @@ class AgentDataAdapter:
             return self._portfolio_pool
 
     # ========== 训练窗口接口 ========== 
-    def win_roll(self)->bool:
+    def win_roll(self) -> bool:
         """
-        若 record 中 current_year_month < (end_year, 12)，则滚动训练窗口：
-            1. 从 record 读当前窗口，计算下一期并写回 record
-            2. cursor = 0，打乱组合顺序
-            3. 删除 adapter 中最早一期的训练数据（已滚出窗口）
-            4. 返回 True
-        否则返回 False
+        在组合用尽时调用。根据 _retrain_cursor 与 _retrain_times 决定：
+        - 若 _retrain_cursor < _retrain_times：仅重置组合游标并打乱当前窗口顺序，不滚窗、不删数据，_retrain_cursor += 1，返回 True。
+        - 否则：若 current_year_month < (end_year, 12)，则滚动训练窗口（更新 ym、打乱、删最早一期数据），_retrain_cursor = 0，返回 True；否则返回 False。
         """
         current_ym = DATA_CACHE_POOL.get_current_year_month()
         if current_ym is None:
-            logger.warning("record 中当前窗口未设置，无法滚动")
+            logger.warning("record 中当前窗口未设置，无法滚动/重置")
             return False
+        if self._retrain_cursor < self._retrain_times:
+            with self._portfolio_pool_lock:
+                self._portfolio_cursor = 0
+                ym_int = current_ym[0] * 12 + current_ym[1]
+                shuffle_seed = self._effective_sample_seed + ym_int + self._retrain_cursor
+                random.Random(shuffle_seed).shuffle(self._portfolio_pool)
+            logger.info(
+                f" {current_ym} 窗口本轮已用完，第 {self._retrain_cursor + 1}/{self._retrain_times} 轮，重置游标并打乱后继续"
+            )
+            self._retrain_cursor += 1
+            return True
         if not AgentDataAdapter._year_month_greater((self.end_year, 12), current_ym):
             logger.warning('已经达到结束年月，暂停滚动')
             return False
         next_ym = self._roll_year_month(current_ym, 1)
-        
-        # 打乱组合顺序，使下一窗口的采样顺序与本月不同，保证多样性（用有效种子可复现）
         with self._portfolio_pool_lock:
             ym_int = next_ym[0] * 12 + next_ym[1]
             shuffle_seed = self._effective_sample_seed + ym_int
             random.Random(shuffle_seed).shuffle(self._portfolio_pool)
             self._portfolio_cursor = 0
         DATA_CACHE_POOL.put_current_year_month(next_ym[0], next_ym[1])
-
-        # 删除最早一期的训练数据（当前窗口为 next ~ next-(m-1)，不再需要 next-m）
         m = self.train_config.get('m', 1)
         ym_to_drop = self._roll_year_month(next_ym, -m)
         with self._data_pool_lock:
@@ -305,8 +311,8 @@ class AgentDataAdapter:
             self.delete_train_data(y, mo, code)
         if keys_to_drop:
             logger.info(f'win_roll: 已删除最早训练数据 {ym_to_drop[0]}-{ym_to_drop[1]}, 条数={len(keys_to_drop)}')
-
-        logger.info(f'滚动成功，当前ym:{next_ym[0]}-{next_ym[1]}')
+        self._retrain_cursor = 0
+        logger.info(f" {current_ym} 窗口已训练 {self._retrain_times} 轮，滚动窗口至 {next_ym[0]}-{next_ym[1]}")
         return True
         
     def win_get_current_year_month(self) -> Tuple[int, int]:

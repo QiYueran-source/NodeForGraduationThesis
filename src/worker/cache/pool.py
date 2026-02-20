@@ -20,6 +20,7 @@ meta：由主机提供，结构见下。约定：顶层 = 固定（环境统一�
     - rf_end_year: 强化学习结束年份(后续年份不再学习但继续计算)，月份默认12
     - save_every_n_steps: 每多少步保存一次模型
     - sample_and_shuffle_seed: 采样与滚窗打乱种子；设后所有容器组合采样顺序、每窗口 shuffle 顺序一致，可复现
+    - retrain_times: 同一窗口重复训练轮数，默认 1；>1 时本窗口组合用尽后重置游标并打乱再扫一轮，满轮后再滚窗
 - performance_config: 表现计算配置
     - risk_free_rate: 无风险利率
     - （vol/sharpe/max_drawdown 的滚动窗口已统一为 train_config.m，不再使用 rolling_window / max_drawdown_window）

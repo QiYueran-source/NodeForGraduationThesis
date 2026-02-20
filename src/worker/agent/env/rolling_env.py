@@ -97,16 +97,9 @@ class RollingEnv(gym.Env):
         # 获取当前窗口的下一个 portfolio
         next_portfolio = AGENT_DATA_ADAPTER.win_get_a_portfolio()
         if len(next_portfolio) == 0:
-            logger.info(f" {AGENT_DATA_ADAPTER.win_get_current_year_month()} 窗口没有可用的portfolio，滚动窗口")
-            
-            # 滚动窗口
-            rolling = AGENT_DATA_ADAPTER.win_roll()
-
-            # 获取下一个portfolio
+            AGENT_DATA_ADAPTER.win_roll()
             next_portfolio = AGENT_DATA_ADAPTER.win_get_a_portfolio()
-            
-            # 滚动窗口失败
-            if not rolling or len(next_portfolio) == 0:
+            if len(next_portfolio) == 0:
                 logger.warning(f" {AGENT_DATA_ADAPTER.win_get_current_year_month()} 已经到达结束窗口/没有可用的portfolio，返回zero_obs")
                 info = {"msg": "no pending portfolio", "no_more_episodes": True}
                 return self._zero_obs, info
