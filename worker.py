@@ -247,12 +247,15 @@ def stop():
 
     # 保存（仅写 data/task_id，不写 /Node）
     SAVER.append_performance_and_reward_snapshot(daemon=False)  # 最后一次落盘
-    SAVER.save_model(daemon=False)  # 保存模型到任务目录
-    SAVER.save_rl_checkpoint(daemon=False)  # 保存 RL 到任务目录，非 daemon 以便落盘后再复制到 /Node
+    t_model = SAVER.save_model(daemon=False)  # 保存模型到任务目录
+    t_rl = SAVER.save_rl_checkpoint(daemon=False)  # 保存 RL 到任务目录
     SAVER.save_record(daemon=False)  # 保存状态（异步写 record.json）
 
-    # 等待异步线程完成
-    time.sleep(1.5)
+    # 等待 model / RL 保存线程完成后再复制到 /Node，避免复制到半成品
+    for t in (t_model, t_rl):
+        if t is not None:
+            t.join(timeout=30)
+    time.sleep(0.5)  # 给 record 等异步写留一点时间
 
     # 发送前：先写 checkpoint.json，再复制 model/rl 到 /Node，保证 metadata 与文件一致
     SAVER.write_checkpoint_json()

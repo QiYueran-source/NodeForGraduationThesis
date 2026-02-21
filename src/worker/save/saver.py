@@ -151,12 +151,14 @@ class Saver:
         except Exception as e:
             logger.error(f"异步保存模型失败: {e}")
 
-    def save_model(self, daemon:bool = True):
-        """异步保存模型到本地（safetensors），仅写入 data/task_id/model.safetensors，不写 /Node。"""
+    def save_model(self, daemon: bool = True):
+        """异步保存模型到本地（safetensors），仅写入 data/task_id/model.safetensors，不写 /Node。返回线程，便于 stop 时 join 等待落盘。"""
         base = self._get_base_path()
         out_path = str(base / "model.safetensors")
         state_dict = NET_ADAPTER.get_checkpoint()
-        threading.Thread(target=self._write_model_worker, args=(state_dict, out_path), daemon=daemon).start()
+        t = threading.Thread(target=self._write_model_worker, args=(state_dict, out_path), daemon=daemon)
+        t.start()
+        return t
 
     def write_checkpoint_json(self):
         """训练开始前调用：将当前 config_uuid（及可选 n,m,mask_len）写入 /Node/checkpoint.json，供下一 run 比对断点。"""
@@ -199,10 +201,13 @@ class Saver:
         """
         异步保存 RL 算法完整状态到 data/task_id/checkpoint_rl（生成 .zip），不写 /Node。
         daemon: 与 save_model 一致，False 时线程非 daemon，便于 stop 时等待落盘后再 copy_checkpoint_to_node。
+        返回线程，便于 stop 时 join 等待落盘。
         """
         base = self._get_base_path()
         path = str(base / "checkpoint_rl")  # SB3 会生成 checkpoint_rl.zip
-        threading.Thread(target=self._write_rl_checkpoint_worker, args=(path,), daemon=daemon).start()
+        t = threading.Thread(target=self._write_rl_checkpoint_worker, args=(path,), daemon=daemon)
+        t.start()
+        return t
 
     def copy_checkpoint_to_node(self):
         """
