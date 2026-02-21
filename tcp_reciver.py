@@ -197,6 +197,7 @@ def main():
                 data = client_socket.recv(1024)
                 if data:
                     message_str = data.decode('utf-8', errors='strict').strip()
+                    print("[TCP 收到]", message_str)
                     response = handle_message(message_str, client_socket)
                     logger.debug(f"返回响应: {response}")
                     client_socket.sendall(json.dumps(response).encode('utf-8'))
