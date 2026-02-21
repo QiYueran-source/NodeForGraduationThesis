@@ -162,7 +162,7 @@ class Saver:
         return t
 
     def write_checkpoint_json(self):
-        """在复制 checkpoint 到 /Node 之前调用：将当前 config_uuid（及可选 n,m,mask_len）写入 /Node/checkpoint.json，供下一 run 比对断点。"""
+        """在复制 checkpoint 到 /Node 之前调用：将当前 config_uuid、saved_at（及可选 n,m,mask_len,seed）写入 /Node/checkpoint.json，供下一 run 比对断点。"""
         try:
             tc = DATA_CACHE_POOL.get_train_config() or {}
             config_uuid = tc.get("config_uuid")
@@ -179,6 +179,9 @@ class Saver:
                 obj["m"] = m
             if mask_len is not None:
                 obj["mask_len"] = mask_len
+            seed = tc.get("seed")
+            if seed is not None:
+                obj["seed"] = seed
             path = self._CHECKPOINT_DIR / self._CHECKPOINT_JSON
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(obj, f, ensure_ascii=False)
