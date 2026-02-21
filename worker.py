@@ -214,6 +214,9 @@ def stop():
     # 等待异步线程完成
     time.sleep(1.5)
 
+    # 最后再发一次 perf 与 record，避免 daemon 写盘线程未及发送
+    SAVER.send_perf_and_record()
+
     # 停止
     data_thread.data_thread_stop()
 

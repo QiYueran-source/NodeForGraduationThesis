@@ -8,6 +8,7 @@ import math
 import yaml
 import os
 import json
+import subprocess
 import threading
 from pathlib import Path
 
@@ -31,6 +32,7 @@ class Saver:
         # 文件游标与锁（保证 segment 与文件名一致，多线程安全）
         self._performance_and_reward_snapshot_cursor = 0
         self._snapshot_lock = threading.Lock()
+        self._send_lock = threading.Lock()  # 落盘+发送：只发 record + perf，发送成功后只删本次列表中的 perf
 
         # 加载配置 
         self._load_config()
@@ -96,12 +98,13 @@ class Saver:
         
 
     def _write_jsonl_worker(self, record_path: Path, lines: list):
-        """后台线程：将已序列化的行追加写入 record.jsonl。"""
+        """后台线程：将已序列化的行追加写入；写完后异步触发发送 perf 与 record（发送成功则删本次 perf）。"""
         try:
             with open(record_path, "a", encoding="utf-8") as f:
                 for line in lines:
                     f.write(line + "\n")
             logger.debug(f"追加记录快照: {record_path}, 条数={len(lines)}")
+            threading.Thread(target=self.send_perf_and_record, daemon=True).start()
         except Exception as e:
             logger.error(f"异步写入 record.jsonl 失败: {e}")
 
@@ -178,6 +181,51 @@ class Saver:
     def save_status(self):
         """保存状态到本地（与 save_record 一致，供 worker 停止时调用）"""
         self.save_record()
+
+    def send_perf_and_record(self):
+        """
+        只发送 record.json 与 performance_and_reward_*.jsonl 到主机；发送成功后删除本次发送的 perf 文件。
+        加锁保证「列清单 + rsync + 删本次列表」原子，避免其他落盘线程刚写的文件被误删。
+        task_id / node_id 缺失时不发送、不删文件。
+        """
+        task_id = DATA_CACHE_POOL.get_task_id()
+        node_id = DATA_CACHE_POOL.get_node_id()
+        if not task_id or not node_id:
+            logger.warning("task_id 或 node_id 为空，跳过发送 perf 与 record")
+            return
+        base = self._get_base_path()
+        if not base.exists():
+            return
+        try:
+            with self._send_lock:
+                perf_files = sorted(base.glob("performance_and_reward_*.jsonl"))
+                to_send = list(perf_files)
+                src = str(base) + "/"
+                dest = f"nodeuser@43.139.192.176::node_result/{task_id}/{node_id}/"
+                cmd = [
+                    "rsync", "-avz",
+                    "--include=record.json",
+                    "--include=performance_and_reward_*.jsonl",
+                    "--exclude=*",
+                    "--password-file=/Node/rsync.passwd",
+                    "--port=8730",
+                    src,
+                    dest,
+                ]
+                ret = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                if ret.returncode == 0:
+                    for p in to_send:
+                        try:
+                            p.unlink()
+                        except OSError as e:
+                            logger.warning(f"发送成功后删除 perf 文件失败: {p}, {e}")
+                    logger.debug(f"发送 perf 与 record 成功，已删除 {len(to_send)} 个 perf 文件")
+                else:
+                    logger.warning(f"发送 perf 与 record 失败: returncode={ret.returncode}, stderr={ret.stderr!r}")
+        except subprocess.TimeoutExpired:
+            logger.warning("发送 perf 与 record 超时，未删除本地 perf 文件")
+        except Exception as e:
+            logger.exception(f"发送 perf 与 record 异常: {e}")
 
 SAVER = Saver()
 
