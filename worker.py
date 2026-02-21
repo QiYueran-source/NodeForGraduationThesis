@@ -116,7 +116,9 @@ def train():
     # 断点：每次 if 过滤一种不可用情况，全部通过后再加载
     checkpoint_json_path = Path("/Node/checkpoint.json")
     checkpoint_rl_path = Path("/Node/checkpoint_rl")
+    checkpoint_rl_zip_path = Path("/Node/checkpoint_rl.zip")
     checkpoint_safetensors_path = Path("/Node/checkpoint.safetensors")
+    rl_exists = checkpoint_rl_path.exists() or checkpoint_rl_zip_path.exists()
     use_checkpoint = False
     try:
         if not DATA_CACHE_POOL.get_checkpoint():
@@ -130,13 +132,14 @@ def train():
             current_uuid = (DATA_CACHE_POOL.get_train_config() or {}).get("config_uuid")
             if saved_uuid is None or current_uuid is None or saved_uuid != current_uuid:
                 logger.info(f"断点：config_uuid 不一致或缺失，从头训练 (saved={saved_uuid!r}, current={current_uuid!r})")
-            elif not checkpoint_rl_path.exists() and not checkpoint_safetensors_path.exists():
+            elif not rl_exists and not checkpoint_safetensors_path.exists():
                 logger.info("断点：config_uuid 一致但 checkpoint 文件不存在，从头训练")
             else:
                 use_checkpoint = True
         if use_checkpoint:
-            if checkpoint_rl_path.exists():
-                RL_ADAPTER.load_checkpoint(str(checkpoint_rl_path))
+            if rl_exists:
+                rl_path_str = str(checkpoint_rl_zip_path if checkpoint_rl_zip_path.exists() else checkpoint_rl_path)
+                RL_ADAPTER.load_checkpoint(rl_path_str)
                 logger.info("已从断点加载 RL 完整状态，开始增量训练")
             else:
                 NET_ADAPTER.load_checkpoint(str(checkpoint_safetensors_path))
@@ -157,8 +160,8 @@ def train():
         if ym is not None:
             from src.worker.agent.env import REWARD_MANAGER
             REWARD_MANAGER.advance_snapshot_progress(ym[0], ym[1])
-        SAVER.save_model()
-        SAVER.save_rl_checkpoint()
+        SAVER.save_model(daemon=False)
+        SAVER.save_rl_checkpoint(daemon=False)
 
     # 使用模型继续预测，直到end_year或收到停止信号
     logger.info("========= 开始滚动预测 =========")
@@ -244,15 +247,17 @@ def stop():
     # 设置运行状态
     DATA_CACHE_POOL.put_running(False)
 
-    # 保存
+    # 保存（仅写 data/task_id，不写 /Node）
     SAVER.append_performance_and_reward_snapshot(daemon=False)  # 最后一次落盘
-    SAVER.save_model(daemon=False)  # 保存模型
-    SAVER.save_rl_checkpoint()  # 同步保存 RL 完整状态
+    SAVER.save_model(daemon=False)  # 保存模型到任务目录
+    SAVER.save_rl_checkpoint(daemon=False)  # 保存 RL 到任务目录，非 daemon 以便落盘后再复制到 /Node
     SAVER.save_record(daemon=False)  # 保存状态（异步写 record.json）
 
     # 等待异步线程完成
     time.sleep(1.5)
 
+    # 发送前：将任务目录的 checkpoint 复制到 /Node，供下一 run 断点加载
+    SAVER.copy_checkpoint_to_node()
     # 最后再发一次 perf 与 record，避免 daemon 写盘线程未及发送
     SAVER.send_perf_and_record()
 

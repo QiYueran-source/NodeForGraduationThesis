@@ -8,6 +8,7 @@ import math
 import yaml
 import os
 import json
+import shutil
 import subprocess
 import threading
 from pathlib import Path
@@ -143,19 +144,15 @@ class Saver:
     _CHECKPOINT_RL = "checkpoint_rl"  # SB3 完整状态（policy + optimizer + n_timesteps 等），与具体算法解耦
 
     def _write_model_worker(self, state_dict: dict, out_path: str):
-        """后台线程：将 state_dict 写入 task 的 model.safetensors，并加锁写入 /Node/checkpoint.safetensors。"""
+        """后台线程：将 state_dict 写入 task 的 model.safetensors（仅任务目录，不写 /Node）。"""
         try:
             save_file(state_dict, out_path)
             logger.info(f"模型已保存: {out_path}")
-            with self._checkpoint_write_lock:
-                checkpoint_path = self._CHECKPOINT_DIR / self._CHECKPOINT_SAFETENSORS
-                save_file(state_dict, str(checkpoint_path))
-                logger.info(f"断点：checkpoint.safetensors 已更新: {checkpoint_path}")
         except Exception as e:
             logger.error(f"异步保存模型失败: {e}")
 
     def save_model(self, daemon:bool = True):
-        """异步保存模型到本地（safetensors），主线程仅做 get_checkpoint，写盘在后台执行，不阻塞；同时更新 /Node/checkpoint.safetensors。"""
+        """异步保存模型到本地（safetensors），仅写入 data/task_id/model.safetensors，不写 /Node。"""
         base = self._get_base_path()
         out_path = str(base / "model.safetensors")
         state_dict = NET_ADAPTER.get_checkpoint()
@@ -186,20 +183,50 @@ class Saver:
         except Exception as e:
             logger.warning(f"写入 checkpoint.json 失败: {e}")
 
-    def save_rl_checkpoint(self):
-        """
-        保存 RL 算法完整状态（SB3：policy + optimizer + n_timesteps 等）到 /Node/checkpoint_rl。
-        通过 RL_ADAPTER.save_checkpoint(path) 调用，与具体算法类型解耦。
-        写盘时使用 _checkpoint_write_lock，与 checkpoint.safetensors 写盘互斥。
-        """
+    _CHECKPOINT_RL_ZIP = "checkpoint_rl.zip"  # SB3 save(path) 生成 path.zip
+
+    def _write_rl_checkpoint_worker(self, path: str):
+        """后台线程：将 RL 完整状态写入 path（SB3 会生成 path.zip），仅写任务目录。"""
         try:
             from src.worker.agent import RL_ADAPTER
-            path = str(self._CHECKPOINT_DIR / self._CHECKPOINT_RL)
             with self._checkpoint_write_lock:
                 RL_ADAPTER.save_checkpoint(path)
             logger.info(f"断点：RL checkpoint 已保存: {path}")
         except Exception as e:
             logger.warning(f"保存 RL checkpoint 失败: {e}")
+
+    def save_rl_checkpoint(self, daemon: bool = True):
+        """
+        异步保存 RL 算法完整状态到 data/task_id/checkpoint_rl（生成 .zip），不写 /Node。
+        daemon: 与 save_model 一致，False 时线程非 daemon，便于 stop 时等待落盘后再 copy_checkpoint_to_node。
+        """
+        base = self._get_base_path()
+        path = str(base / "checkpoint_rl")  # SB3 会生成 checkpoint_rl.zip
+        threading.Thread(target=self._write_rl_checkpoint_worker, args=(path,), daemon=daemon).start()
+
+    def copy_checkpoint_to_node(self):
+        """
+        训练结束、发送前调用：将 data/task_id 下的 model.safetensors 与 checkpoint_rl.zip 复制到 /Node，
+        供下一 run 断点加载。若任务目录中不存在则跳过对应项。
+        """
+        base = self._get_base_path()
+        if base == Path("/Node/data"):
+            logger.debug("task_id 未设置，跳过复制 checkpoint 到 /Node")
+            return
+        try:
+            with self._checkpoint_write_lock:
+                src_model = base / "model.safetensors"
+                dst_model = self._CHECKPOINT_DIR / self._CHECKPOINT_SAFETENSORS
+                if src_model.exists():
+                    shutil.copy2(str(src_model), str(dst_model))
+                    logger.info(f"断点：已复制 model 到 /Node: {dst_model}")
+                src_rl = base / self._CHECKPOINT_RL_ZIP
+                dst_rl = self._CHECKPOINT_DIR / self._CHECKPOINT_RL_ZIP
+                if src_rl.exists():
+                    shutil.copy2(str(src_rl), str(dst_rl))
+                    logger.info(f"断点：已复制 RL checkpoint 到 /Node: {dst_rl}")
+        except Exception as e:
+            logger.warning(f"复制 checkpoint 到 /Node 失败: {e}")
 
     def _write_record_worker(self, base: Path, payload: dict):
         """后台线程：将 payload 原子写入 record.json。"""

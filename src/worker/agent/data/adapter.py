@@ -312,7 +312,7 @@ class AgentDataAdapter:
         if next_ym[0] != current_ym[0]:
             logger.info(f"年份切换 {current_ym[0]} -> {next_ym[0]}，保存模型与 RL checkpoint")
             SAVER.save_model(daemon=False)
-            SAVER.save_rl_checkpoint()
+            SAVER.save_rl_checkpoint(daemon=False)
         
         with self._portfolio_pool_lock:
             ym_int = next_ym[0] * 12 + next_ym[1]
