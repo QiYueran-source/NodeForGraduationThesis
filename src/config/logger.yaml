@@ -1,9 +1,9 @@
 logger:
-  level: 'INFO'
+  level: 'CRITICAL'
   default_prefix: '[Logger]'
 handlers:
   file_names: 'logs/app'
-  level: 'INFO'
+  level: 'CRITICAL'
   when: 'midnight'
   interval: 1
   backup_count: 5

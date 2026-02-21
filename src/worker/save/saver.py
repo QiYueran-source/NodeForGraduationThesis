@@ -101,7 +101,7 @@ class Saver:
         for key, data in incremental_result.items():
             y, m, portfolio = key
             obj = {"year": y, "month": m, "portfolio": list(portfolio), "data": self._serialize_perf(data)}
-            obj = self._round_floats_in(obj, 3)
+            obj = self._round_floats_in(obj, 4)
             lines.append(json.dumps(obj, ensure_ascii=False))
         with self._snapshot_lock:
             if segment:
