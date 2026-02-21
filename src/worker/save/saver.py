@@ -161,7 +161,7 @@ class Saver:
         return t
 
     def write_checkpoint_json(self):
-        """训练开始前调用：将当前 config_uuid（及可选 n,m,mask_len）写入 /Node/checkpoint.json，供下一 run 比对断点。"""
+        """在复制 checkpoint 到 /Node 之前调用：将当前 config_uuid（及可选 n,m,mask_len）写入 /Node/checkpoint.json，供下一 run 比对断点。"""
         try:
             tc = DATA_CACHE_POOL.get_train_config() or {}
             config_uuid = tc.get("config_uuid")
