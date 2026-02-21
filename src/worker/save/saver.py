@@ -33,6 +33,7 @@ class Saver:
         self._performance_and_reward_snapshot_cursor = 0
         self._snapshot_lock = threading.Lock()
         self._send_lock = threading.Lock()  # 落盘+发送：只发 record + perf，发送成功后只删本次列表中的 perf
+        self._checkpoint_write_lock = threading.Lock()  # 写 /Node/checkpoint.safetensors 时加锁，避免并发写
 
         # 加载配置 
         self._load_config()
@@ -136,20 +137,70 @@ class Saver:
             record_path = self._get_base_path() / file_name
         threading.Thread(target=self._write_jsonl_worker, args=(record_path, lines), daemon=daemon).start()
 
+    _CHECKPOINT_DIR = Path("/Node")
+    _CHECKPOINT_SAFETENSORS = "checkpoint.safetensors"
+    _CHECKPOINT_JSON = "checkpoint.json"
+    _CHECKPOINT_PPO = "checkpoint_ppo"  # SB3 完整状态（policy + optimizer + n_timesteps 等）
+
     def _write_model_worker(self, state_dict: dict, out_path: str):
-        """后台线程：将 state_dict 写入 safetensors 文件。"""
+        """后台线程：将 state_dict 写入 task 的 model.safetensors，并加锁写入 /Node/checkpoint.safetensors。"""
         try:
             save_file(state_dict, out_path)
             logger.info(f"模型已保存: {out_path}")
+            with self._checkpoint_write_lock:
+                checkpoint_path = self._CHECKPOINT_DIR / self._CHECKPOINT_SAFETENSORS
+                save_file(state_dict, str(checkpoint_path))
+                logger.debug(f"checkpoint 已更新: {checkpoint_path}")
         except Exception as e:
             logger.error(f"异步保存模型失败: {e}")
 
     def save_model(self, daemon:bool = True):
-        """异步保存模型到本地（safetensors），主线程仅做 get_checkpoint，写盘在后台执行，不阻塞。"""
+        """异步保存模型到本地（safetensors），主线程仅做 get_checkpoint，写盘在后台执行，不阻塞；同时更新 /Node/checkpoint.safetensors。"""
         base = self._get_base_path()
         out_path = str(base / "model.safetensors")
         state_dict = NET_ADAPTER.get_checkpoint()
-        threading.Thread(target=self._write_model_worker, args=(state_dict, out_path), daemon=daemon).start() 
+        threading.Thread(target=self._write_model_worker, args=(state_dict, out_path), daemon=daemon).start()
+
+    def write_checkpoint_json(self):
+        """训练开始前调用：将当前 config_uuid（及可选 n,m,mask_len）写入 /Node/checkpoint.json，供下一 run 比对断点。"""
+        try:
+            tc = DATA_CACHE_POOL.get_train_config() or {}
+            config_uuid = tc.get("config_uuid")
+            if config_uuid is None:
+                logger.debug("train_config 无 config_uuid，不写 checkpoint.json")
+                return
+            obj = {"config_uuid": config_uuid}
+            n = DATA_CACHE_POOL.get_n()
+            m = tc.get("m")
+            mask_len = tc.get("mask_len")
+            if n is not None:
+                obj["n"] = n
+            if m is not None:
+                obj["m"] = m
+            if mask_len is not None:
+                obj["mask_len"] = mask_len
+            path = self._CHECKPOINT_DIR / self._CHECKPOINT_JSON
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(obj, f, ensure_ascii=False)
+            logger.debug(f"checkpoint.json 已写入: {path}")
+        except Exception as e:
+            logger.warning(f"写入 checkpoint.json 失败: {e}")
+
+    def save_ppo_checkpoint(self, algorithm):
+        """
+        保存 RL 模型完整状态（SB3：policy + optimizer + n_timesteps 等）到 /Node/checkpoint_ppo。
+        algorithm: RL_ADAPTER.algorithm（PPO/A2C 等），需有 .save(path) 方法。
+        写盘时使用 _checkpoint_write_lock，与 checkpoint.safetensors 写盘互斥。
+        """
+        if algorithm is None:
+            return
+        try:
+            path = str(self._CHECKPOINT_DIR / self._CHECKPOINT_PPO)
+            with self._checkpoint_write_lock:
+                algorithm.save(path)
+            logger.debug(f"PPO checkpoint 已保存: {path}")
+        except Exception as e:
+            logger.warning(f"保存 PPO checkpoint 失败: {e}")
 
     def _write_record_worker(self, base: Path, payload: dict):
         """后台线程：将 payload 原子写入 record.json。"""

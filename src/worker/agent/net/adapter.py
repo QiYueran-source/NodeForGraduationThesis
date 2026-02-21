@@ -6,6 +6,7 @@
 """
 # 库
 import torch
+from safetensors.torch import load_file
 
 # 组件
 from src.worker.cache import DATA_CACHE_POOL 
@@ -112,7 +113,16 @@ class NetAdapter:
         """
         state_dict = self._model.state_dict()
         return {k: v.cpu().clone() for k, v in state_dict.items()}
-    
+
+    def load_checkpoint(self, path: str):
+        """
+        从 safetensors 文件加载权重到当前模型，用于断点增量训练。
+        path: 如 /Node/checkpoint.safetensors
+        """
+        state_dict = load_file(path, device=self.device)
+        self._model.load_state_dict(state_dict, strict=True)
+        logger.info(f"已从断点加载模型: {path}")
+
     @property
     def model(self) -> torch.nn.Module:
         """返回模型（只读）。"""

@@ -363,6 +363,16 @@ class DataCachePool:
         with self._meta_lock:
             self._meta['short_limit'] = limit
 
+    def get_checkpoint(self) -> bool:
+        """是否使用断点（从 meta.checkpoint 读取，True 时在 train 前尝试加载 /Node/checkpoint.safetensors）"""
+        with self._meta_lock:
+            return bool(self._meta.get('checkpoint', False))
+
+    def put_checkpoint(self, value: bool):
+        """设置是否使用断点（由 parse_args 从 meta 写入）"""
+        with self._meta_lock:
+            self._meta['checkpoint'] = value
+
     def get_meta(self) -> Dict:
         """获取元数据（结构见本文件顶部：顶层固定 + train_config 随机）"""
         with self._meta_lock:
