@@ -183,6 +183,7 @@ class RollingEnv(gym.Env):
         logger.debug(f"step 完成, reward={reward:.4f}, year={year}, month={month}")
         self._pending_portfolio = None
 
+        DATA_CACHE_POOL.increment_step_count()
         return self._zero_obs, reward, True, False, info
 
 ROLLING_ENV = RollingEnv()

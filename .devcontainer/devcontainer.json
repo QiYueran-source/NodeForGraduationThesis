@@ -1,6 +1,6 @@
 {
     "name": "Node Agent Development",
-    "image": "graduation-thesis-node-gpu:latest",
+    "image": "node-for-gt-gpu:latest",
     
     "containerEnv": {
         "NODE_ID": "dev_node_001",

@@ -100,6 +100,7 @@ class DataCachePool:
         self._record: Dict[str, Any] = {
             'running': False,
             'current_year_month': None,
+            'step_count': 0,  # 环境 step 次数，每次 RollingEnv.step 后 +1
         }
         
         # 线程锁，保护缓存操作
@@ -415,5 +416,11 @@ class DataCachePool:
         """设置节点id"""
         with self._record_lock:
             self._record['node_id'] = node_id
+
+    def increment_step_count(self):
+        """环境每 step 一次后调用，将 record.step_count 加 1。"""
+        with self._record_lock:
+            self._record['step_count'] = self._record.get('step_count', 0) + 1
+
 # 全局实例  
 DATA_CACHE_POOL = DataCachePool() 
