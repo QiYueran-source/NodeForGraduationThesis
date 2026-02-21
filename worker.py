@@ -292,7 +292,7 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         logger.warning("收到中断信号，停止worker")
         exit_code = 0
-
+    
     except Exception as e:
         logger.error(f"worker运行失败: {e}")
         exit_code = 1
