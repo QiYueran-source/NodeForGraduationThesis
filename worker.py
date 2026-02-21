@@ -135,7 +135,17 @@ def train():
             elif not rl_exists and not checkpoint_safetensors_path.exists():
                 logger.info("断点：config_uuid 一致但 checkpoint 文件不存在，从头训练")
             else:
-                use_checkpoint = True
+                tc = DATA_CACHE_POOL.get_train_config() or {}
+                current_n = DATA_CACHE_POOL.get_n()
+                if (saved.get("seed") != tc.get("seed") or saved.get("n") != current_n
+                        or saved.get("m") != tc.get("m") or saved.get("mask_len") != tc.get("mask_len")):
+                    logger.info(
+                        f"断点：seed/n/m/mask_len 与当前不一致，从头训练 "
+                        f"(saved seed={saved.get('seed')},n={saved.get('n')},m={saved.get('m')},mask_len={saved.get('mask_len')}; "
+                        f"current seed={tc.get('seed')},n={current_n},m={tc.get('m')},mask_len={tc.get('mask_len')})"
+                    )
+                else:
+                    use_checkpoint = True
         if use_checkpoint:
             if rl_exists:
                 rl_path_str = str(checkpoint_rl_zip_path if checkpoint_rl_zip_path.exists() else checkpoint_rl_path)
