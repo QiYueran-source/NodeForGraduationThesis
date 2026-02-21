@@ -82,6 +82,7 @@ class CustomCallback(BaseCallback):
                 logger.info(f"强化学习结束, 年份: {year}, 月份: {month}, 保存")
                 SAVER.save_record()
                 SAVER.save_model()
+                SAVER.save_rl_checkpoint()
                 SAVER.append_performance_and_reward_snapshot()
                 from src.worker.agent.env import REWARD_MANAGER
                 REWARD_MANAGER.advance_snapshot_progress(year, month)
@@ -99,6 +100,7 @@ class CustomCallback(BaseCallback):
         if self.save_model_every_n_steps is not None and self._step_cursor >= self.save_model_every_n_steps and self._step_cursor % self.save_model_every_n_steps == 0:
             logger.debug(f"保存模型, 步数: {self._step_cursor}")
             SAVER.save_model()
+            SAVER.save_rl_checkpoint()
 
         return True
 
@@ -196,6 +198,25 @@ class ReinforcementLearningAdapter:
         强化学习算法
         """
         return self.rl_algorithm
+
+    def save_checkpoint(self, path: str):
+        """
+        保存当前 RL 算法完整状态（SB3：policy + optimizer + n_timesteps 等）到 path。
+        与具体算法类型解耦，PPO/A2C/SAC/TD3 等均有 .save(path)。
+        """
+        self.rl_algorithm.save(path)
+
+    def load_checkpoint(self, path: str):
+        """
+        从 path 加载 RL 算法完整状态（SB3 保存的目录/zip），替换当前 self.rl_algorithm。
+        按当前 rl_cate（0=PPO, 1=A2C, 2=SAC, 3=TD3）选用对应类进行 load。
+        """
+        _alg_map = {0: PPO, 1: A2C, 2: SAC, 3: TD3}
+        cls = _alg_map.get(self.rl_cate)
+        if cls is None:
+            raise ValueError(f"不支持的 rl_cate={self.rl_cate}，无法 load_checkpoint")
+        self.rl_algorithm = cls.load(path, env=ROLLING_ENV)
+        logger.info(f"已从断点加载 RL 算法: {path}")
 
     def train(self, total_timesteps: int = 900_000_000):
         """

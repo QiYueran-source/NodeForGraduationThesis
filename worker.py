@@ -110,23 +110,30 @@ def start():
 def train():
     """使用NET_ADAPTER,ENV和RL_ADAPTER进行训练"""
     logger.info("开始强化学习训练")
-    # 断点：若 meta.checkpoint 为 True 且 config_uuid 与 checkpoint.json 一致，则加载 /Node/checkpoint.safetensors
+    # 断点：若 meta.checkpoint 为 True 且 config_uuid 与 checkpoint.json 一致，优先加载 RL 完整状态，否则加载 Net 权重
     if DATA_CACHE_POOL.get_checkpoint():
         checkpoint_json_path = Path("/Node/checkpoint.json")
+        checkpoint_rl_path = Path("/Node/checkpoint_rl")
         checkpoint_safetensors_path = Path("/Node/checkpoint.safetensors")
         try:
-            if checkpoint_json_path.exists() and checkpoint_safetensors_path.exists():
+            if checkpoint_json_path.exists():
                 with open(checkpoint_json_path, "r", encoding="utf-8") as f:
                     saved = json.load(f)
                 saved_uuid = saved.get("config_uuid")
                 current_uuid = (DATA_CACHE_POOL.get_train_config() or {}).get("config_uuid")
                 if saved_uuid is not None and current_uuid is not None and saved_uuid == current_uuid:
-                    NET_ADAPTER.load_checkpoint(str(checkpoint_safetensors_path))
-                    logger.info("已从断点加载模型，开始增量训练")
+                    if checkpoint_rl_path.exists():
+                        RL_ADAPTER.load_checkpoint(str(checkpoint_rl_path))
+                        logger.info("已从断点加载 RL 完整状态，开始增量训练")
+                    elif checkpoint_safetensors_path.exists():
+                        NET_ADAPTER.load_checkpoint(str(checkpoint_safetensors_path))
+                        logger.info("已从断点加载模型(仅权重)，开始增量训练")
+                    else:
+                        logger.debug("checkpoint 文件不存在，从头训练")
                 else:
                     logger.debug(f"断点 config_uuid 不一致或缺失，从头训练 (saved={saved_uuid!r}, current={current_uuid!r})")
             else:
-                logger.debug("checkpoint 文件不存在，从头训练")
+                logger.debug("checkpoint.json 不存在，从头训练")
         except Exception as e:
             logger.warning(f"断点加载跳过: {e}")
     # 训练开始前写入当前 config 到 checkpoint.json，供下一 run 比对
@@ -143,6 +150,7 @@ def train():
             from src.worker.agent.env import REWARD_MANAGER
             REWARD_MANAGER.advance_snapshot_progress(ym[0], ym[1])
         SAVER.save_model()
+        SAVER.save_rl_checkpoint()
 
     # 使用模型继续预测，直到end_year或收到停止信号
     logger.info("========= 开始滚动预测 =========")
@@ -231,6 +239,7 @@ def stop():
     # 保存
     SAVER.append_performance_and_reward_snapshot(daemon=False)  # 最后一次落盘
     SAVER.save_model(daemon=False)  # 保存模型
+    SAVER.save_rl_checkpoint()  # 同步保存 RL 完整状态
     SAVER.save_record(daemon=False)  # 保存状态（异步写 record.json）
 
     # 等待异步线程完成

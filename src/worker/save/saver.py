@@ -140,7 +140,7 @@ class Saver:
     _CHECKPOINT_DIR = Path("/Node")
     _CHECKPOINT_SAFETENSORS = "checkpoint.safetensors"
     _CHECKPOINT_JSON = "checkpoint.json"
-    _CHECKPOINT_PPO = "checkpoint_ppo"  # SB3 完整状态（policy + optimizer + n_timesteps 等）
+    _CHECKPOINT_RL = "checkpoint_rl"  # SB3 完整状态（policy + optimizer + n_timesteps 等），与具体算法解耦
 
     def _write_model_worker(self, state_dict: dict, out_path: str):
         """后台线程：将 state_dict 写入 task 的 model.safetensors，并加锁写入 /Node/checkpoint.safetensors。"""
@@ -186,21 +186,20 @@ class Saver:
         except Exception as e:
             logger.warning(f"写入 checkpoint.json 失败: {e}")
 
-    def save_ppo_checkpoint(self, algorithm):
+    def save_rl_checkpoint(self):
         """
-        保存 RL 模型完整状态（SB3：policy + optimizer + n_timesteps 等）到 /Node/checkpoint_ppo。
-        algorithm: RL_ADAPTER.algorithm（PPO/A2C 等），需有 .save(path) 方法。
+        保存 RL 算法完整状态（SB3：policy + optimizer + n_timesteps 等）到 /Node/checkpoint_rl。
+        通过 RL_ADAPTER.save_checkpoint(path) 调用，与具体算法类型解耦。
         写盘时使用 _checkpoint_write_lock，与 checkpoint.safetensors 写盘互斥。
         """
-        if algorithm is None:
-            return
         try:
-            path = str(self._CHECKPOINT_DIR / self._CHECKPOINT_PPO)
+            from src.worker.agent import RL_ADAPTER
+            path = str(self._CHECKPOINT_DIR / self._CHECKPOINT_RL)
             with self._checkpoint_write_lock:
-                algorithm.save(path)
-            logger.debug(f"PPO checkpoint 已保存: {path}")
+                RL_ADAPTER.save_checkpoint(path)
+            logger.debug(f"RL checkpoint 已保存: {path}")
         except Exception as e:
-            logger.warning(f"保存 PPO checkpoint 失败: {e}")
+            logger.warning(f"保存 RL checkpoint 失败: {e}")
 
     def _write_record_worker(self, base: Path, payload: dict):
         """后台线程：将 payload 原子写入 record.json。"""
