@@ -178,6 +178,7 @@ class DataMonitor:
                 logger.debug(f"loader 返回 year={year} 条数={len(data)}")
                 items = [{'code': code, 'year': year, 'month': month, 'data': data} for (month, code), data in data.items()]
                 DATA_CACHE_POOL.batch_put_train(items)
+                DATA_CACHE_POOL.put_record('latest_data', {"year": year, "count": len(items)})
                 self.now_year = year
                 # DATA_CACHE_POOL.put_current_year_month(year, 12) # 废弃，进度由agent的rolling控制 
                 logger.info(f"数据已写入缓存池: year={year}, 条数={len(items)}, 当前窗口=({year}, 12)")  

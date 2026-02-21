@@ -248,6 +248,7 @@ class AgentDataAdapter:
                 # 将删除的键添加到_deleted_train_data_pool
                 self._deleted_train_data_pool[key] = True
                 logger.debug(f"数据已删除并记录到删除池: {year}, {month}, {code}")
+                DATA_CACHE_POOL.put_record('latest_deleted_data', {"year": year, "month": month, "code": code})
                 return True
             return False
     

@@ -101,6 +101,8 @@ class DataCachePool:
             'running': False,
             'current_year_month': None,
             'step_count': 0,  # 环境 step 次数，每次 RollingEnv.step 后 +1
+            'latest_data': None,  # 最近一次加载数据摘要，加载后更新
+            'latest_deleted_data': None,  # 最近一次删除数据摘要，删除后更新
         }
         
         # 线程锁，保护缓存操作
