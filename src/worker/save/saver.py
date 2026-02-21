@@ -11,6 +11,7 @@ import json
 import shutil
 import subprocess
 import threading
+from datetime import datetime
 from pathlib import Path
 
 from safetensors.torch import save_file
@@ -168,7 +169,7 @@ class Saver:
             if config_uuid is None:
                 logger.info("断点：train_config 无 config_uuid，跳过写入 checkpoint.json")
                 return
-            obj = {"config_uuid": config_uuid}
+            obj = {"config_uuid": config_uuid, "saved_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")}
             n = DATA_CACHE_POOL.get_n()
             m = tc.get("m")
             mask_len = tc.get("mask_len")
