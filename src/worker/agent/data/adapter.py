@@ -308,6 +308,12 @@ class AgentDataAdapter:
         SAVER.append_performance_and_reward_snapshot(segment=True)
         REWARD_MANAGER.advance_snapshot_progress(current_ym[0], current_ym[1])
         next_ym = self._roll_year_month(current_ym, 1)
+        
+        if next_ym[0] != current_ym[0]:
+            logger.info(f"年份切换 {current_ym[0]} -> {next_ym[0]}，保存模型与 RL checkpoint")
+            SAVER.save_model(daemon=False)
+            SAVER.save_rl_checkpoint()
+        
         with self._portfolio_pool_lock:
             ym_int = next_ym[0] * 12 + next_ym[1]
             shuffle_seed = self._effective_sample_seed + ym_int

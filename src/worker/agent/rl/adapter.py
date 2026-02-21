@@ -81,8 +81,6 @@ class CustomCallback(BaseCallback):
             if self.rl_end_year is not None and year > self.rl_end_year:
                 logger.info(f"强化学习结束, 年份: {year}, 月份: {month}, 保存")
                 SAVER.save_record()
-                SAVER.save_model()
-                SAVER.save_rl_checkpoint()
                 SAVER.append_performance_and_reward_snapshot()
                 from src.worker.agent.env import REWARD_MANAGER
                 REWARD_MANAGER.advance_snapshot_progress(year, month)
@@ -95,12 +93,6 @@ class CustomCallback(BaseCallback):
         # 保存状态（按 save_record_every_n_steps）
         if self.save_record_every_n_steps is not None and self._step_cursor % self.save_record_every_n_steps == 0 and self._step_cursor >= self.save_record_every_n_steps:
             SAVER.save_record()
-
-        # 保存模型 
-        if self.save_model_every_n_steps is not None and self._step_cursor >= self.save_model_every_n_steps and self._step_cursor % self.save_model_every_n_steps == 0:
-            logger.debug(f"保存模型, 步数: {self._step_cursor}")
-            SAVER.save_model()
-            SAVER.save_rl_checkpoint()
 
         return True
 
