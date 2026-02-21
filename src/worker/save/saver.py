@@ -67,6 +67,27 @@ class Saver:
             return round(obj, ndigits)
         return obj
 
+    _FILTER_TOL = 1e-6  # 落盘前清理：权重/收益率在此范围内视为 0 或 1
+
+    def _should_skip_perf_entry(self, data: dict) -> bool:
+        """
+        是否跳过该条不落盘：除最后一项（现金）外权重均为 0，且 performance[0]（收益率）为 0 的条目剔除。
+        适用于任意 n，不阻塞主进程（仅主线程内轻量计算）。
+        """
+        try:
+            weights = data.get("decision_weights")
+            perf = data.get("performance")
+            if not weights or len(weights) < 2 or not perf or len(perf) < 1:
+                return False
+            weights = list(weights) if isinstance(weights, tuple) else weights
+            tol = self._FILTER_TOL
+            non_cash_all_zero = all(abs(float(w)) <= tol for w in weights[:-1])
+            cash_near_one = abs(float(weights[-1]) - 1.0) <= tol
+            rtr_near_zero = abs(float(perf[0])) <= tol
+            return bool(non_cash_all_zero and cash_near_one and rtr_near_zero)
+        except (TypeError, ValueError, IndexError):
+            return False
+
     def save_meta(self):
         """保存 meta 到本地（结构见 pool.py 顶部：顶层固定 + train_config 随机）"""
         meta_path = self._get_base_path() / "meta.json"
@@ -99,6 +120,8 @@ class Saver:
             return
         lines = []
         for key, data in incremental_result.items():
+            if self._should_skip_perf_entry(data):
+                continue
             y, m, portfolio = key
             obj = {"year": y, "month": m, "portfolio": list(portfolio), "data": self._serialize_perf(data)}
             obj = self._round_floats_in(obj, 4)
