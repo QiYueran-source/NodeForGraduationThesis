@@ -35,3 +35,8 @@ data/*
 
 # 密码
 rsync.passwd
+
+# 断点
+checkpoint.json
+checkpoint.safetensors
+checkpoint_rl.zip

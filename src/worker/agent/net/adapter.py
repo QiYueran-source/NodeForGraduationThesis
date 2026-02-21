@@ -117,9 +117,10 @@ class NetAdapter:
     def load_checkpoint(self, path: str):
         """
         从 safetensors 文件加载权重到当前模型，用于断点增量训练。
+        先加载到 CPU 再 load_state_dict，避免 safetensors 直接 device=cuda 在某些进程环境下报 device invalid。
         path: 如 /Node/checkpoint.safetensors
         """
-        state_dict = load_file(path, device=self.device)
+        state_dict = load_file(path, device="cpu")
         self._model.load_state_dict(state_dict, strict=True)
         logger.info(f"已从断点加载模型: {path}")
 
