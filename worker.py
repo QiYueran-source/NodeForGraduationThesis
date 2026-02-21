@@ -146,9 +146,7 @@ def train():
                 logger.info("已从断点加载模型(仅权重)，开始增量训练")
     except Exception as e:
         logger.exception(f"断点加载跳过: {e}")
-    
-    # 训练开始前写入当前 config 到 checkpoint.json，供下一 run 比对
-    SAVER.write_checkpoint_json()
+
     try:
         RL_ADAPTER.train()
         logger.info("强化学习训练结束，进入预测阶段")
@@ -256,8 +254,10 @@ def stop():
     # 等待异步线程完成
     time.sleep(1.5)
 
-    # 发送前：将任务目录的 checkpoint 复制到 /Node，供下一 run 断点加载
+    # 发送前：先写 checkpoint.json，再复制 model/rl 到 /Node，保证 metadata 与文件一致
+    SAVER.write_checkpoint_json()
     SAVER.copy_checkpoint_to_node()
+    
     # 最后再发一次 perf 与 record，避免 daemon 写盘线程未及发送
     SAVER.send_perf_and_record()
 
