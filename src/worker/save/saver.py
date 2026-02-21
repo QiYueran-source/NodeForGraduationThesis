@@ -225,11 +225,15 @@ class Saver:
                 if src_model.exists():
                     shutil.copy2(str(src_model), str(dst_model))
                     logger.info(f"断点：已复制 model 到 /Node: {dst_model}")
+                else:
+                    logger.warning("断点：任务目录下无 model.safetensors，跳过复制到 /Node")
                 src_rl = base / self._CHECKPOINT_RL_ZIP
                 dst_rl = self._CHECKPOINT_DIR / self._CHECKPOINT_RL_ZIP
                 if src_rl.exists():
                     shutil.copy2(str(src_rl), str(dst_rl))
                     logger.info(f"断点：已复制 RL checkpoint 到 /Node: {dst_rl}")
+                else:
+                    logger.warning("断点：任务目录下无 checkpoint_rl.zip，跳过复制到 /Node")
         except Exception as e:
             logger.warning(f"复制 checkpoint 到 /Node 失败: {e}")
 
