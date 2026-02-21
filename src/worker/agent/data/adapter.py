@@ -47,11 +47,13 @@ class AgentDataAdapter:
         self._data_pool_lock = threading.Lock() # 保护数据池的锁  
         self._portfolio_pool_lock = threading.Lock() # 保护组合池的锁  
 
-        # 采样与 shuffle 种子、同一窗口多轮训练
+        # 采样与 shuffle 种子、同一窗口多轮训练、仅预测年份是否跑满
         env_config = DATA_CACHE_POOL.get_env_config() or {}
         self._sample_and_shuffle_seed = env_config.get('sample_and_shuffle_seed')
         self._retrain_times = int(env_config.get('retrain_times', 1))
         self._retrain_cursor = 0  # 当前窗口已训练轮数，由 win_roll 根据其与 _retrain_times 决定重置还是滚窗
+        _rl = env_config.get('rl_end_year')
+        self._rl_end_year = int(_rl) if _rl is not None else None  # 仅预测年份（current_ym[0] > 此值）不跑满，直接滚窗
         self._effective_sample_seed = (
             self._sample_and_shuffle_seed
             if self._sample_and_shuffle_seed is not None
@@ -278,12 +280,14 @@ class AgentDataAdapter:
         在组合用尽时调用。根据 _retrain_cursor 与 _retrain_times 决定：
         - 若 _retrain_cursor < _retrain_times：仅重置组合游标并打乱当前窗口顺序，不滚窗、不删数据，_retrain_cursor += 1，返回 True。
         - 否则：若 current_year_month < (end_year, 12)，则滚动训练窗口（更新 ym、打乱、删最早一期数据），_retrain_cursor = 0，返回 True；否则返回 False。
+        仅预测年份（current_ym[0] > rl_end_year）不跑满多轮，组合用尽后直接滚窗。
         """
         current_ym = DATA_CACHE_POOL.get_current_year_month()
         if current_ym is None:
             logger.warning("record 中当前窗口未设置，无法滚动/重置")
             return False
-        if self._retrain_cursor < self._retrain_times:
+        prediction_only = self._rl_end_year is not None and current_ym[0] > self._rl_end_year
+        if not prediction_only and self._retrain_cursor < self._retrain_times:
             with self._portfolio_pool_lock:
                 self._portfolio_cursor = 0
                 ym_int = current_ym[0] * 12 + current_ym[1]
@@ -297,6 +301,12 @@ class AgentDataAdapter:
         if not AgentDataAdapter._year_month_greater((self.end_year, 12), current_ym):
             logger.warning('已经达到结束年月，暂停滚动')
             return False
+        
+        # 滚窗保存：先落盘当前窗 perf & reward，再推进快照进度，再滚窗与删数据
+        from src.worker.save.saver import SAVER
+        from src.worker.agent.env import REWARD_MANAGER
+        SAVER.append_performance_and_reward_snapshot(segment=True)
+        REWARD_MANAGER.advance_snapshot_progress(current_ym[0], current_ym[1])
         next_ym = self._roll_year_month(current_ym, 1)
         with self._portfolio_pool_lock:
             ym_int = next_ym[0] * 12 + next_ym[1]
@@ -313,7 +323,10 @@ class AgentDataAdapter:
         if keys_to_drop:
             logger.info(f'win_roll: 已删除最早训练数据 {ym_to_drop[0]}-{ym_to_drop[1]}, 条数={len(keys_to_drop)}')
         self._retrain_cursor = 0
-        logger.info(f" {current_ym} 窗口已训练 {self._retrain_times} 轮，滚动窗口至 {next_ym[0]}-{next_ym[1]}")
+        if prediction_only:
+            logger.info(f" {current_ym} 仅预测窗，直接滚动窗口至 {next_ym[0]}-{next_ym[1]}")
+        else:
+            logger.info(f" {current_ym} 窗口已训练 {self._retrain_times} 轮，滚动窗口至 {next_ym[0]}-{next_ym[1]}")
         return True
         
     def win_get_current_year_month(self) -> Tuple[int, int]:

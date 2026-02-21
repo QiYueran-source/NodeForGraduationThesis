@@ -569,10 +569,12 @@ class RewardManager:
         ]
         incremental_record_dict = {k: self._record[k] for k in incremental_record_keys}
 
-        self._snapshot_progress = (year, month)
         self._prune_record((year, month))
         return incremental_record_dict
 
+    def advance_snapshot_progress(self, year: int, month: int) -> None:
+        """仅在滚窗或结束流程时调用，将 _snapshot_progress 设为该 (year, month)。"""
+        self._snapshot_progress = (year, month)
 
 
 REWARD_MANAGER = RewardManager()

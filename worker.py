@@ -116,6 +116,10 @@ def train():
         logger.exception("强化学习训练失败，保存当前状态后继续滚动预测")
         SAVER.save_record()
         SAVER.append_performance_and_reward_snapshot()
+        ym = DATA_CACHE_POOL.get_current_year_month()
+        if ym is not None:
+            from src.worker.agent.env import REWARD_MANAGER
+            REWARD_MANAGER.advance_snapshot_progress(ym[0], ym[1])
         SAVER.save_model()
 
     # 使用模型继续预测，直到end_year或收到停止信号
@@ -134,6 +138,8 @@ def train():
             logger.info(f"预测阶段结束(已到end_year), year={year}")
             SAVER.save_record()
             SAVER.append_performance_and_reward_snapshot()
+            from src.worker.agent.env import REWARD_MANAGER
+            REWARD_MANAGER.advance_snapshot_progress(year, month)
             break
 
         # 预测
@@ -142,6 +148,10 @@ def train():
         # 没有可用的portfolio
         if info.get("no_more_episodes"):
             logger.info("预测阶段结束(no_more_episodes)")
+            SAVER.save_record()
+            SAVER.append_performance_and_reward_snapshot()
+            from src.worker.agent.env import REWARD_MANAGER
+            REWARD_MANAGER.advance_snapshot_progress(year, month)
             break
 
         # 行动
@@ -155,12 +165,9 @@ def train():
         # 保存结果
         ec = DATA_CACHE_POOL.get_env_config() or {}
         save_record_every_n_steps = ec.get('save_record_every_n_steps', 50)
-        save_performance_and_reward_every_n_steps = ec.get('save_performance_and_reward_every_n_steps', 300)
         _save_cursor += 1
         if _save_cursor % save_record_every_n_steps == 0 and _save_cursor >= save_record_every_n_steps:
             SAVER.save_record()
-        if _save_cursor % save_performance_and_reward_every_n_steps == 0 and _save_cursor >= save_performance_and_reward_every_n_steps:
-            SAVER.append_performance_and_reward_snapshot(segment=True)
             
 
 def send_result():
