@@ -61,7 +61,10 @@ def parse_args_and_load_pool():
     DATA_CACHE_POOL.put_performance_config(meta['performance_config'])
     DATA_CACHE_POOL.put_env_config(meta['env_config'])
     DATA_CACHE_POOL.put_short_limit(meta['short_limit'])
-    DATA_CACHE_POOL.put_checkpoint(meta.get('checkpoint', False))
+    checkpoint_enabled = meta.get('checkpoint', False)
+    DATA_CACHE_POOL.put_checkpoint(checkpoint_enabled)
+    
+    logger.info(f"断点增量：meta.checkpoint={checkpoint_enabled}")
     train_config_json = args.train_config
     train_config = json.loads(train_config_json)
     DATA_CACHE_POOL.put_train_config(train_config)
@@ -110,32 +113,37 @@ def start():
 def train():
     """使用NET_ADAPTER,ENV和RL_ADAPTER进行训练"""
     logger.info("开始强化学习训练")
-    # 断点：若 meta.checkpoint 为 True 且 config_uuid 与 checkpoint.json 一致，优先加载 RL 完整状态，否则加载 Net 权重
-    if DATA_CACHE_POOL.get_checkpoint():
-        checkpoint_json_path = Path("/Node/checkpoint.json")
-        checkpoint_rl_path = Path("/Node/checkpoint_rl")
-        checkpoint_safetensors_path = Path("/Node/checkpoint.safetensors")
-        try:
-            if checkpoint_json_path.exists():
-                with open(checkpoint_json_path, "r", encoding="utf-8") as f:
-                    saved = json.load(f)
-                saved_uuid = saved.get("config_uuid")
-                current_uuid = (DATA_CACHE_POOL.get_train_config() or {}).get("config_uuid")
-                if saved_uuid is not None and current_uuid is not None and saved_uuid == current_uuid:
-                    if checkpoint_rl_path.exists():
-                        RL_ADAPTER.load_checkpoint(str(checkpoint_rl_path))
-                        logger.info("已从断点加载 RL 完整状态，开始增量训练")
-                    elif checkpoint_safetensors_path.exists():
-                        NET_ADAPTER.load_checkpoint(str(checkpoint_safetensors_path))
-                        logger.info("已从断点加载模型(仅权重)，开始增量训练")
-                    else:
-                        logger.debug("checkpoint 文件不存在，从头训练")
-                else:
-                    logger.debug(f"断点 config_uuid 不一致或缺失，从头训练 (saved={saved_uuid!r}, current={current_uuid!r})")
+    # 断点：每次 if 过滤一种不可用情况，全部通过后再加载
+    checkpoint_json_path = Path("/Node/checkpoint.json")
+    checkpoint_rl_path = Path("/Node/checkpoint_rl")
+    checkpoint_safetensors_path = Path("/Node/checkpoint.safetensors")
+    use_checkpoint = False
+    try:
+        if not DATA_CACHE_POOL.get_checkpoint():
+            logger.info("断点增量：meta.checkpoint 未启用，从头训练")
+        elif not checkpoint_json_path.exists():
+            logger.info("断点：checkpoint.json 不存在，从头训练")
+        else:
+            with open(checkpoint_json_path, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+            saved_uuid = saved.get("config_uuid")
+            current_uuid = (DATA_CACHE_POOL.get_train_config() or {}).get("config_uuid")
+            if saved_uuid is None or current_uuid is None or saved_uuid != current_uuid:
+                logger.info(f"断点：config_uuid 不一致或缺失，从头训练 (saved={saved_uuid!r}, current={current_uuid!r})")
+            elif not checkpoint_rl_path.exists() and not checkpoint_safetensors_path.exists():
+                logger.info("断点：config_uuid 一致但 checkpoint 文件不存在，从头训练")
             else:
-                logger.debug("checkpoint.json 不存在，从头训练")
-        except Exception as e:
-            logger.warning(f"断点加载跳过: {e}")
+                use_checkpoint = True
+        if use_checkpoint:
+            if checkpoint_rl_path.exists():
+                RL_ADAPTER.load_checkpoint(str(checkpoint_rl_path))
+                logger.info("已从断点加载 RL 完整状态，开始增量训练")
+            else:
+                NET_ADAPTER.load_checkpoint(str(checkpoint_safetensors_path))
+                logger.info("已从断点加载模型(仅权重)，开始增量训练")
+    except Exception as e:
+        logger.exception(f"断点加载跳过: {e}")
+    
     # 训练开始前写入当前 config 到 checkpoint.json，供下一 run 比对
     SAVER.write_checkpoint_json()
     try:

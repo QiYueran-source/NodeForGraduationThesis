@@ -104,7 +104,7 @@ class Saver:
             with open(record_path, "a", encoding="utf-8") as f:
                 for line in lines:
                     f.write(line + "\n")
-            logger.debug(f"追加记录快照: {record_path}, 条数={len(lines)}")
+            logger.info(f"performance_and_reward 已落盘: {record_path}, 条数={len(lines)}")
             threading.Thread(target=self.send_perf_and_record, daemon=True).start()
         except Exception as e:
             logger.error(f"异步写入 record.jsonl 失败: {e}")
@@ -150,7 +150,7 @@ class Saver:
             with self._checkpoint_write_lock:
                 checkpoint_path = self._CHECKPOINT_DIR / self._CHECKPOINT_SAFETENSORS
                 save_file(state_dict, str(checkpoint_path))
-                logger.debug(f"checkpoint 已更新: {checkpoint_path}")
+                logger.info(f"断点：checkpoint.safetensors 已更新: {checkpoint_path}")
         except Exception as e:
             logger.error(f"异步保存模型失败: {e}")
 
@@ -167,7 +167,7 @@ class Saver:
             tc = DATA_CACHE_POOL.get_train_config() or {}
             config_uuid = tc.get("config_uuid")
             if config_uuid is None:
-                logger.debug("train_config 无 config_uuid，不写 checkpoint.json")
+                logger.info("断点：train_config 无 config_uuid，跳过写入 checkpoint.json")
                 return
             obj = {"config_uuid": config_uuid}
             n = DATA_CACHE_POOL.get_n()
@@ -182,7 +182,7 @@ class Saver:
             path = self._CHECKPOINT_DIR / self._CHECKPOINT_JSON
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(obj, f, ensure_ascii=False)
-            logger.debug(f"checkpoint.json 已写入: {path}")
+            logger.info(f"断点：checkpoint.json 已写入 config_uuid={config_uuid}: {path}")
         except Exception as e:
             logger.warning(f"写入 checkpoint.json 失败: {e}")
 
@@ -197,7 +197,7 @@ class Saver:
             path = str(self._CHECKPOINT_DIR / self._CHECKPOINT_RL)
             with self._checkpoint_write_lock:
                 RL_ADAPTER.save_checkpoint(path)
-            logger.debug(f"RL checkpoint 已保存: {path}")
+            logger.info(f"断点：RL checkpoint 已保存: {path}")
         except Exception as e:
             logger.warning(f"保存 RL checkpoint 失败: {e}")
 
