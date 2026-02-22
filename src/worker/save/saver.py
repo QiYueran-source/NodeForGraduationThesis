@@ -118,7 +118,9 @@ class Saver:
         """
         incremental_result = REWARD_MANAGER.get_incremental_snapshot(year, month)
         if not incremental_result:
+            logger.critical(f"[p&r] 跳过保存快照: 无增量 (year, month)=({year}, {month})")
             return
+        logger.critical(f"[p&r] 保存增量 (year, month)=({year}, {month}), 条数={len(incremental_result)}")
         lines = []
         for key, data in incremental_result.items():
             if self._should_skip_perf_entry(data):

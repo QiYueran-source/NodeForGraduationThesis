@@ -182,7 +182,7 @@ def train():
         if year > DATA_CACHE_POOL.get_end_year():
             logger.info(f"预测阶段结束(已到end_year), year={year}")
             SAVER.save_record()
-            SAVER.append_performance_and_reward_snapshot()
+            SAVER.append_performance_and_reward_snapshot(segment=True)
             break
 
         # 预测
@@ -192,7 +192,7 @@ def train():
         if info.get("no_more_episodes"):
             logger.info("预测阶段结束(no_more_episodes)")
             SAVER.save_record()
-            SAVER.append_performance_and_reward_snapshot()
+            SAVER.append_performance_and_reward_snapshot(segment=True)
             break
 
         # 行动
@@ -248,7 +248,7 @@ def stop():
     DATA_CACHE_POOL.put_running(False)
 
     # 保存（仅写 data/task_id，不写 /Node）
-    SAVER.append_performance_and_reward_snapshot(daemon=False)  # 最后一次落盘
+    SAVER.append_performance_and_reward_snapshot(segment=True, daemon=False)  # 最后一次落盘，新段避免覆盖主机端 p&r_2
     t_model = SAVER.save_model(daemon=False)  # 保存模型到任务目录
     t_rl = SAVER.save_rl_checkpoint(daemon=False)  # 保存 RL 到任务目录
     SAVER.save_record(daemon=False)  # 保存状态（异步写 record.json）
