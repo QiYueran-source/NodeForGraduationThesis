@@ -7,4 +7,9 @@ data/*
 # git相关
 .git
 .gitignore
+
+# 断点
+checkpoint_rl.zip 
+checkpoint.json 
+checkpoint.safetensors
  

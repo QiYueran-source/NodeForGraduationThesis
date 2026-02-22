@@ -34,6 +34,7 @@ class Saver:
         # 文件游标与锁（保证 segment 与文件名一致，多线程安全）
         self._performance_and_reward_snapshot_cursor = 0
         self._snapshot_lock = threading.Lock()
+        self._append_claim_lock = threading.Lock()  # 串行「取增量+推进进度」，避免 break 与 stop 重复保存同一 (year, month)
         self._send_lock = threading.Lock()  # 落盘+发送：只发 record + perf，发送成功后只删本次列表中的 perf
         self._checkpoint_write_lock = threading.Lock()  # 写 /Node/checkpoint.safetensors 时加锁，避免并发写
 
@@ -113,10 +114,13 @@ class Saver:
 
     def _append_snapshot_worker(self, year: int, month: int, segment: bool, daemon: bool):
         """
-        后台线程：拉取增量、拼 lines、落盘，落盘成功后推进保存进度。
-        仅在有增量且写入完成后才 advance_snapshot_progress，避免空增量误推进。
+        后台线程：在 _append_claim_lock 内取增量并立即推进进度，避免 break 与 stop 重复保存同一 (year, month)；
+        锁外拼 lines、落盘。
         """
-        incremental_result = REWARD_MANAGER.get_incremental_snapshot(year, month)
+        with self._append_claim_lock:
+            incremental_result = REWARD_MANAGER.get_incremental_snapshot(year, month)
+            if incremental_result:
+                REWARD_MANAGER.advance_snapshot_progress(year, month)
         if not incremental_result:
             logger.critical(f"[p&r] 跳过保存快照: 无增量 (year, month)=({year}, {month})")
             return
@@ -135,7 +139,6 @@ class Saver:
             file_name = f"performance_and_reward_{self._performance_and_reward_snapshot_cursor}.jsonl"
             record_path = self._get_base_path() / file_name
         self._write_jsonl_worker(record_path, lines)
-        REWARD_MANAGER.advance_snapshot_progress(year, month)
 
     def append_performance_and_reward_snapshot(self, segment: bool = False, daemon: bool = True):
         """

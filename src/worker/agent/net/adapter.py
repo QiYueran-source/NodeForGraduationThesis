@@ -122,7 +122,7 @@ class NetAdapter:
         """
         state_dict = load_file(path, device="cpu")
         self._model.load_state_dict(state_dict, strict=True)
-        logger.info(f"已从断点加载模型: {path}")
+        logger.warning(f"SB3断点失败: 已从 safetensors 加载模型: {path}")
 
     @property
     def model(self) -> torch.nn.Module:
