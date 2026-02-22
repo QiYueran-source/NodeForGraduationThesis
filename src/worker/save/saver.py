@@ -277,6 +277,7 @@ class Saver:
             "current_year_month": list(current_ym) if current_ym else None,
             "record": DATA_CACHE_POOL.get_record(),
         }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
         threading.Thread(target=self._write_record_worker, args=(base, payload), daemon=daemon).start()
 
     def save_status(self):
