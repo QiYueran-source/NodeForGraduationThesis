@@ -79,11 +79,8 @@ class CustomCallback(BaseCallback):
         if ym is not None:
             year, month = ym
             if self.rl_end_year is not None and year > self.rl_end_year:
-                logger.info(f"强化学习结束, 年份: {year}, 月份: {month}, 保存")
+                logger.info(f"强化学习结束, 年份: {year}, 月份: {month}")
                 SAVER.save_record()
-                SAVER.append_performance_and_reward_snapshot()
-                from src.worker.agent.env import REWARD_MANAGER
-                REWARD_MANAGER.advance_snapshot_progress(year, month)
                 return False
 
         # 保存
