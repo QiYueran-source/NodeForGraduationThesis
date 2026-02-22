@@ -304,11 +304,9 @@ class AgentDataAdapter:
         
         # 滚窗：先算下一窗，仅跨年时落盘 p&r、推进快照进度并保存模型（每年保存一次）
         from src.worker.save.saver import SAVER
-        from src.worker.agent.env import REWARD_MANAGER
         next_ym = self._roll_year_month(current_ym, 1)
         if next_ym[0] != current_ym[0]:
             SAVER.append_performance_and_reward_snapshot(segment=True)
-            REWARD_MANAGER.advance_snapshot_progress(current_ym[0], current_ym[1])
             logger.info(f"年份切换 {current_ym[0]} -> {next_ym[0]}，保存模型与 RL checkpoint")
             SAVER.save_model(daemon=False)
             SAVER.save_rl_checkpoint(daemon=False)

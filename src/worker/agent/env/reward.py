@@ -559,18 +559,20 @@ class RewardManager:
 
         增量为上一次 _snapshot_progress 到当前 (year, month) 的差集（不包含上次的 year_month）。
         返回前会裁剪 _record（保留期数 = max(m, std_window)+1，且不删未保存的）。
+        整段在 _record_lock 下执行，保证与后台保存线程并发安全。
         """
-        yp, mp = self._snapshot_progress
+        with self._record_lock:
+            yp, mp = self._snapshot_progress
 
-        incremental_record_keys = [
-            k for k in self._record.keys()
-            if AGENT_DATA_ADAPTER._year_month_greater((k[0], k[1]), (yp, mp))
-            and not AGENT_DATA_ADAPTER._year_month_greater((k[0], k[1]), (year, month))
-        ]
-        incremental_record_dict = {k: self._record[k] for k in incremental_record_keys}
+            incremental_record_keys = [
+                k for k in self._record.keys()
+                if AGENT_DATA_ADAPTER._year_month_greater((k[0], k[1]), (yp, mp))
+                and not AGENT_DATA_ADAPTER._year_month_greater((k[0], k[1]), (year, month))
+            ]
+            incremental_record_dict = {k: self._record[k] for k in incremental_record_keys}
 
-        self._prune_record((year, month))
-        return incremental_record_dict
+            self._prune_record((year, month))
+            return incremental_record_dict
 
     def advance_snapshot_progress(self, year: int, month: int) -> None:
         """仅在滚窗或结束流程时调用，将 _snapshot_progress 设为该 (year, month)。"""

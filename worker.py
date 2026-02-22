@@ -164,10 +164,6 @@ def train():
         logger.exception("强化学习训练失败，保存当前状态后继续滚动预测")
         SAVER.save_record()
         SAVER.append_performance_and_reward_snapshot()
-        ym = DATA_CACHE_POOL.get_current_year_month()
-        if ym is not None:
-            from src.worker.agent.env import REWARD_MANAGER
-            REWARD_MANAGER.advance_snapshot_progress(ym[0], ym[1])
         SAVER.save_model(daemon=False)
         SAVER.save_rl_checkpoint(daemon=False)
 
@@ -187,8 +183,6 @@ def train():
             logger.info(f"预测阶段结束(已到end_year), year={year}")
             SAVER.save_record()
             SAVER.append_performance_and_reward_snapshot()
-            from src.worker.agent.env import REWARD_MANAGER
-            REWARD_MANAGER.advance_snapshot_progress(year, month)
             break
 
         # 预测
@@ -199,8 +193,6 @@ def train():
             logger.info("预测阶段结束(no_more_episodes)")
             SAVER.save_record()
             SAVER.append_performance_and_reward_snapshot()
-            from src.worker.agent.env import REWARD_MANAGER
-            REWARD_MANAGER.advance_snapshot_progress(year, month)
             break
 
         # 行动

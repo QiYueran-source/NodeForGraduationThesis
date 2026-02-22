@@ -111,16 +111,11 @@ class Saver:
         except Exception as e:
             logger.error(f"异步写入 record.jsonl 失败: {e}")
 
-    def append_performance_and_reward_snapshot(self, segment: bool = False, daemon: bool = True):
+    def _append_snapshot_worker(self, year: int, month: int, segment: bool, daemon: bool):
         """
-        异步保存表现和奖励快照到本地，按 JSONL 追加，不阻塞主流程。
-        segment: True 时 cursor+=1 后写入新段文件，否则追加到当前段文件。
+        后台线程：拉取增量、拼 lines、落盘，落盘成功后推进保存进度。
+        仅在有增量且写入完成后才 advance_snapshot_progress，避免空增量误推进。
         """
-        current_ym = DATA_CACHE_POOL.get_current_year_month()
-        if not current_ym:
-            logger.warning("当前窗口未设置，跳过保存快照")
-            return
-        year, month = current_ym
         incremental_result = REWARD_MANAGER.get_incremental_snapshot(year, month)
         if not incremental_result:
             return
@@ -137,7 +132,25 @@ class Saver:
                 self._performance_and_reward_snapshot_cursor += 1
             file_name = f"performance_and_reward_{self._performance_and_reward_snapshot_cursor}.jsonl"
             record_path = self._get_base_path() / file_name
-        threading.Thread(target=self._write_jsonl_worker, args=(record_path, lines), daemon=daemon).start()
+        self._write_jsonl_worker(record_path, lines)
+        REWARD_MANAGER.advance_snapshot_progress(year, month)
+
+    def append_performance_and_reward_snapshot(self, segment: bool = False, daemon: bool = True):
+        """
+        异步保存表现和奖励快照到本地，按 JSONL 追加，不阻塞主流程。
+        segment: True 时 cursor+=1 后写入新段文件，否则追加到当前段文件。
+        拉取增量、拼 lines、落盘及推进进度均在后台线程中完成。
+        """
+        current_ym = DATA_CACHE_POOL.get_current_year_month()
+        if not current_ym:
+            logger.warning("当前窗口未设置，跳过保存快照")
+            return
+        year, month = current_ym
+        threading.Thread(
+            target=self._append_snapshot_worker,
+            args=(year, month, segment, daemon),
+            daemon=daemon,
+        ).start()
 
     _CHECKPOINT_DIR = Path("/Node")
     _CHECKPOINT_SAFETENSORS = "checkpoint.safetensors"
