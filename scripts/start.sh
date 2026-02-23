@@ -1,8 +1,8 @@
 #!/bin/bash
 
 cleanup() {
-    echo "=== 收到停止信号，先执行 stop.sh ==="
-    /Node/scripts/stop.sh
+    echo "=== 收到停止信号，先执行 end.sh ==="
+    /Node/scripts/end.sh
     exit 0
 }
 
