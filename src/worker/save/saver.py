@@ -95,12 +95,13 @@ class Saver:
         
 
     def _write_jsonl_worker(self, record_path: Path, lines: list):
-        """后台线程：将已序列化的行追加写入；仅落盘，不触发发送（训练结束由 stop 统一调用 send_perf_and_record）。"""
+        """后台线程：将已序列化的行追加写入；写完后异步触发发送 perf 与 record（发送成功则删本次 perf），避免最后统一发送开销过大。"""
         try:
             with open(record_path, "a", encoding="utf-8") as f:
                 for line in lines:
                     f.write(line + "\n")
             logger.info(f"performance_and_reward 已落盘: {record_path}, 条数={len(lines)}")
+            threading.Thread(target=self.send_perf_and_record, daemon=True).start()
         except Exception as e:
             logger.error(f"异步写入 record.jsonl 失败: {e}")
 

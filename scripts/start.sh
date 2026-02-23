@@ -1,5 +1,7 @@
 #!/bin/bash
 
+export TERM=dumb
+
 cleanup() {
     echo "=== 收到停止信号，先执行 end.sh ==="
     /Node/scripts/end.sh
