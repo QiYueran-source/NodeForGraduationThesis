@@ -161,10 +161,11 @@ class DataMonitor:
             for year in range(now_year + 1, now_year + need_load_years + 1):
                 logger.debug(f"开始从 loader 拉取 year={year}")
 
-                # 边界判断
+                # 边界判断：超过 end_year 则停止加载，并结束数据获取线程（保留 stop() 时的清理）
                 end_year = DATA_CACHE_POOL.get_end_year() or 2024 
                 if year > end_year:
                     logger.info(f"已到达结束年份，停止加载: year={year} > end_year={end_year}")
+                    self.started = False
                     break
 
                 # 使用带重试机制的加载方法

@@ -167,18 +167,18 @@ def train():
         SAVER.save_model(daemon=False)
         SAVER.save_rl_checkpoint(daemon=False)
 
-    # 使用模型继续预测，直到end_year或收到停止信号
+    # 使用模型继续预测，停止条件：get_running() 为 False 或 year > end_year
     logger.info("========= 开始滚动预测 =========")
     print("========= 开始滚动预测 =========")
     _save_cursor = 0
-    while DATA_CACHE_POOL.get_running():
+    while True:
+        if not DATA_CACHE_POOL.get_running():
+            break
         ym = DATA_CACHE_POOL.get_current_year_month()
         if ym is None:
             logger.warning("当前窗口未设置，结束预测")
             break
         year, month = ym
-
-        # 结束条件
         if year > DATA_CACHE_POOL.get_end_year():
             logger.info(f"预测阶段结束(已到end_year), year={year}")
             SAVER.save_record()
@@ -209,6 +209,8 @@ def train():
         _save_cursor += 1
         if _save_cursor % save_record_every_n_steps == 0 and _save_cursor >= save_record_every_n_steps:
             SAVER.save_record()
+    logger.info('========= 滚动预测结束 =========')
+    print('========= 滚动预测结束 =========')
             
 
 def send_result():
