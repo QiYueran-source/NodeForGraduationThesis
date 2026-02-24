@@ -309,9 +309,14 @@ class AgentDataAdapter:
         next_ym = self._roll_year_month(current_ym, 1)
         if next_ym[0] != current_ym[0]:
             SAVER.append_performance_and_reward_snapshot(segment=True)
-            logger.info(f"年份切换 {current_ym[0]} -> {next_ym[0]}，保存模型与 RL checkpoint")
-            SAVER.save_model(daemon=False)
-            SAVER.save_rl_checkpoint(daemon=False)
+            logger.info(f"年份切换 {current_ym[0]} -> {next_ym[0]}，保存模型与 RL checkpoint 并写入断点")
+            t_model = SAVER.save_model(daemon=False)
+            t_rl = SAVER.save_rl_checkpoint(daemon=False)
+            for t in (t_model, t_rl):
+                if t is not None:
+                    t.join(timeout=30)
+            SAVER.write_checkpoint_json()
+            SAVER.copy_checkpoint_to_node()
         
         with self._portfolio_pool_lock:
             ym_int = next_ym[0] * 12 + next_ym[1]

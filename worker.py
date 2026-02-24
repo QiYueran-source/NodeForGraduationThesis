@@ -298,6 +298,8 @@ if __name__ == "__main__":
         exit_code = 0
     
     except Exception as e:
+        print('====== worker运行失败 ======')
+        print(e)
         logger.error(f"worker运行失败: {e}")
         exit_code = 1
 
