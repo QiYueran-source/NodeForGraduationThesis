@@ -16,6 +16,7 @@ meta：由主机提供，结构见下。约定：顶层 = 固定（环境统一�
 - earliest_year_month: 最早的年份和月份,(year, month)
 - n: 一个组合中的证券数量（算上现金，共n+1个证券）
 - max_portfolios_num: 对于总共n个证券，最多可构建组合数上限
+- port: 节点反向代理端口（来自 frpc.state 的 ALLOCATED_PORT），主机用 meta 连接节点时使用
 - env_config: 环境配置
     - rf_end_year: 强化学习结束年份(后续年份不再学习但继续计算)，月份默认12
     - save_every_n_steps: 每多少步保存一次模型
@@ -94,6 +95,7 @@ class DataCachePool:
                 'mask_len': None,
                 'model_config': None,
             },
+            'port': None,  # 节点反向代理端口（frpc.state 的 ALLOCATED_PORT），主机连接节点时使用
         }
 
         # 记录数据（由节点维护），单独字典
@@ -372,6 +374,16 @@ class DataCachePool:
         """设置是否使用断点（由 parse_args 从 meta 写入）"""
         with self._meta_lock:
             self._meta['checkpoint'] = value
+
+    def get_port(self) -> Optional[int]:
+        """获取端口（meta 中的 port，供主机连接节点）"""
+        with self._meta_lock:
+            return self._meta.get('port')
+
+    def put_port(self, port: Optional[int]):
+        """设置端口（由 parse_args 从 meta 写入，或节点在 start 时设默认值）"""
+        with self._meta_lock:
+            self._meta['port'] = port
 
     def get_meta(self) -> Dict:
         """获取元数据（结构见本文件顶部：顶层固定 + train_config 随机）"""

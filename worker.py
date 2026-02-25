@@ -62,6 +62,7 @@ def parse_args_and_load_pool():
     DATA_CACHE_POOL.put_short_limit(meta['short_limit'])
     checkpoint_enabled = meta.get('checkpoint', False)
     DATA_CACHE_POOL.put_checkpoint(checkpoint_enabled)
+    DATA_CACHE_POOL.put_port(meta.get('port'))
     
     logger.info(f"断点增量：meta.checkpoint={checkpoint_enabled}")
     train_config_json = args.train_config
@@ -93,6 +94,22 @@ def read_node_id_from_frp_state():
     return None
 
 
+def read_port_from_frp_state():
+    """从 frp 状态文件中获取反向代理端口（ALLOCATED_PORT）"""
+    path = Path("/Node/frp/frpc.state")
+    if not path.exists():
+        return None
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith("ALLOCATED_PORT="):
+                try:
+                    return int(line.split("=", 1)[1].strip())
+                except (ValueError, IndexError):
+                    return None
+    return None
+
+
 def send_meta():
     """启动时将 meta.json 同步到主机。"""
     SAVER.send_meta()
@@ -103,6 +120,13 @@ def start():
     DATA_CACHE_POOL.put_running(True)
     DATA_CACHE_POOL.put_pid(os.getpid())
     DATA_CACHE_POOL.put_node_id(read_node_id_from_frp_state())
+
+    # meta.port 使用 frpc.state 中的反向代理端口（ALLOCATED_PORT），供主机连接节点
+    frp_port = read_port_from_frp_state()
+    if frp_port is not None:
+        DATA_CACHE_POOL.put_port(frp_port)
+    elif DATA_CACHE_POOL.get_port() is None:
+        logger.warning("frpc.state 中无 ALLOCATED_PORT 且 meta 未下发 port，meta.port 为空")
 
     # 初始保存meta、record数据
     SAVER.save_meta() # 保存meta数据   
