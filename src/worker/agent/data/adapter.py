@@ -281,7 +281,7 @@ class AgentDataAdapter:
         """
         在组合用尽时调用。根据 _retrain_cursor 与 _retrain_times 决定：
         - 若 _retrain_cursor < _retrain_times：仅重置组合游标并打乱当前窗口顺序，不滚窗、不删数据，_retrain_cursor += 1，返回 True。
-        - 否则：若 current_year_month < (end_year, 12)，则滚动训练窗口（更新 ym、打乱、删最早一期数据），_retrain_cursor = 0，返回 True；否则返回 False。
+        - 否则：若 current_year_month <= (end_year, 12) 则滚动（允许从 (end_year,12) 滚到 (end_year+1,1) 以便训练/预测能结束）；若已超过 (end_year, 12) 则返回 False。
         仅预测年份（current_ym[0] > rl_end_year）不跑满多轮，组合用尽后直接滚窗。
         """
         current_ym = DATA_CACHE_POOL.get_current_year_month()
@@ -300,10 +300,11 @@ class AgentDataAdapter:
             )
             self._retrain_cursor += 1
             return True
-        if not AgentDataAdapter._year_month_greater((self.end_year, 12), current_ym):
-            logger.warning('已经达到结束年月，暂停滚动')
+        # 已超过 (end_year, 12) 则不再滚动；允许从 (end_year, 12) 滚到 (end_year+1, 1)，以便 callback 与预测循环能按 year > end_year 正常结束
+        if AgentDataAdapter._year_month_greater(current_ym, (self.end_year, 12)):
+            logger.warning('已经超过结束年月，暂停滚动')
             return False
-        
+
         # 滚窗：先算下一窗，仅跨年时落盘 p&r、推进快照进度并保存模型（每年保存一次）
         from src.worker.save.saver import SAVER
         next_ym = self._roll_year_month(current_ym, 1)
