@@ -277,12 +277,66 @@ class Saver:
             "current_year_month": list(current_ym) if current_ym else None,
             "record": DATA_CACHE_POOL.get_record(),
         }
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+        # 打印信息
+        task_id = payload.get("task_id")
+        current_ym = payload.get("current_year_month")
+        step_count = payload.get('record',{}).get('step_count')
+        latest_data = payload.get('record',{}).get('latest_data')
+        latest_deleted_data = payload.get('record',{}).get('latest_deleted_data')
+        print(f'--- 保存记录 ---')
+        print(f'task_id: {task_id}')
+        print(f'current_ym: {current_ym}')
+        print(f'step_count: {step_count}')
+        print(f'latest_data: {latest_data}')
+        print(f'latest_deleted_data: {latest_deleted_data}')
+        print(f'\n')
+
+        # 开始保存线程
         threading.Thread(target=self._write_record_worker, args=(base, payload), daemon=daemon).start()
 
     def save_status(self):
         """保存状态到本地（与 save_record 一致，供 worker 停止时调用）"""
         self.save_record()
+
+    def send_meta(self):
+        """
+        将 meta.json 同步到主机（启动时调用，与 send_perf_and_record 使用相同目标与端口）。
+        task_id / node_id 缺失或 base 不存在时不发送。
+        """
+        task_id = DATA_CACHE_POOL.get_task_id()
+        node_id = DATA_CACHE_POOL.get_node_id()
+        if not task_id or not node_id:
+            logger.warning("task_id 或 node_id 为空，跳过发送 meta")
+            return
+        base = self._get_base_path()
+        if not base.exists():
+            return
+        meta_path = base / "meta.json"
+        if not meta_path.exists():
+            logger.warning("meta.json 不存在，跳过发送 meta")
+            return
+        try:
+            src = str(base) + "/"
+            dest = f"nodeuser@43.139.192.176::node_result/{task_id}/{node_id}/"
+            cmd = [
+                "rsync", "-avz",
+                "--include=meta.json",
+                "--exclude=*",
+                "--password-file=/Node/rsync.passwd",
+                "--port=8730",
+                src,
+                dest,
+            ]
+            ret = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            if ret.returncode == 0:
+                logger.info("发送 meta 到主机成功")
+            else:
+                logger.warning(f"发送 meta 失败: returncode={ret.returncode}, stderr={ret.stderr!r}")
+        except subprocess.TimeoutExpired:
+            logger.warning("发送 meta 超时")
+        except Exception as e:
+            logger.exception(f"发送 meta 异常: {e}")
 
     def send_perf_and_record(self):
         """

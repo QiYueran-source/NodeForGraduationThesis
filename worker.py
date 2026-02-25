@@ -15,9 +15,8 @@ import argparse
 import json
 import time
 import sys
-import subprocess
 from pathlib import Path
-import torch
+
 
 # 自定义组件
 from src.worker.data.redis import REDIS_CONNECTOR,REDIS_PREFIX_MANAGER
@@ -93,6 +92,12 @@ def read_node_id_from_frp_state():
                 return line.split("=", 1)[1].strip()
     return None
 
+
+def send_meta():
+    """启动时将 meta.json 同步到主机。"""
+    SAVER.send_meta()
+
+
 def start():
     # 设置运行状态
     DATA_CACHE_POOL.put_running(True)
@@ -102,6 +107,9 @@ def start():
     # 初始保存meta、record数据
     SAVER.save_meta() # 保存meta数据   
     SAVER.save_record() # 保存record数据  
+
+    # 同步meta数据
+    send_meta()
 
     # 启动数据线程 
     data_thread.data_thread_start()  # 启动数据线程 
@@ -213,38 +221,6 @@ def train():
     print('========= 滚动预测结束 =========')
             
 
-def send_result():
-    """发送结果到主机（调用 rsync 脚本，需 task_id 与 frpc.state 中的 NODE_NAME）。"""
-    logger.info("开始发送结果到主机")
-    try:
-        task_id = DATA_CACHE_POOL.get_task_id()
-        if not task_id:
-            logger.warning("task_id 为空，跳过发送结果")
-            return
-        node_id = read_node_id_from_frp_state()
-        if not node_id:
-            logger.warning("未从 frpc.state 读取到 NODE_NAME，跳过发送结果")
-            return
-        env = {**os.environ, "task_id": task_id, "node_id": node_id}
-        script_path = Path("/Node/scripts/rsync/send_result.sh")
-        if not script_path.exists():
-            logger.warning(f"send_result.sh 不存在，跳过发送结果: {script_path}")
-            return
-        subprocess.run(
-            ["bash", str(script_path)],
-            env=env,
-            check=True,
-            cwd="/Node",
-        )
-        logger.info(f"发送结果到主机完成 (task_id={task_id}, node_id={node_id})")
-    except subprocess.CalledProcessError as e:
-        logger.exception(f"rsync 脚本执行失败 (exit {e.returncode})")
-        sys.exit(1)
-    except Exception:
-        logger.exception("发送结果到主机失败")
-        sys.exit(1)
-        
-        
 def stop():
     # 设置运行状态
     DATA_CACHE_POOL.put_running(False)
@@ -305,6 +281,5 @@ if __name__ == "__main__":
 
     finally:
         stop()  # 停止 worker
-        send_result()  # 推送结果到主机
         logger.info("===========worker运行结束===========\n\n")
         sys.exit(exit_code)

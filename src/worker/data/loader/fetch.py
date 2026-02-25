@@ -102,7 +102,9 @@ class DataLoader:
                     counter_responses = pipe.execute()
 
                 logger.info(f"批量加载数据: year={year}, 请求={len(data_keys)}, 成功={len(result)}, 计数器更新={len(counters_to_incr)}")
-
+                        # 成功加载一年数据后打印（仅当本次请求为整年时）
+            if month is None:
+                print(f"成功加载一年数据: year={year}, 请求={len(data_keys)}, 成功={len(result)}")
         except Exception as e:
             logger.warning(f"批量加载数据失败 year={year}: {e}，返回None")
             return None  
