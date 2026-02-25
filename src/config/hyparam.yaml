@@ -24,5 +24,5 @@ record_thread:
 agent:
   data:
     retry_delay: 5 # 重试间隔(s)  
-    timeout: 300 # 超时时间(s)
+    timeout: 600 # 超时时间(s)
     fallback_to_zero_when_unavailable: true # 取不到数据时是否返回全零兜底（超时或数据不存在）
