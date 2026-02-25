@@ -37,21 +37,18 @@ reinforcement_config: 强化学习配置（
 """
 class CustomCallback(BaseCallback):
     def __init__(
-        self, 
-        rl_end_year:Optional[int] = None, 
-        save_model_every_n_steps:Optional[int] = None,
-        save_record_every_n_steps:int = 50,
+        self,
+        rl_end_year: Optional[int] = None,
+        save_record_every_n_steps: int = 50,
     ):
         """
         rl_end_year: 强化学习结束年份，None 表示不结束
-        save_model_every_n_steps: 每多少步保存一次模型，None 表示不保存
         save_record_every_n_steps: 每多少步保存一次记录
         """
         super().__init__()
 
         # 配置
         self.rl_end_year = rl_end_year
-        self.save_model_every_n_steps = save_model_every_n_steps
         self.save_record_every_n_steps = save_record_every_n_steps
 
         # 步数游标：每步 +1，按上述配置间隔触发保存
@@ -60,7 +57,7 @@ class CustomCallback(BaseCallback):
     def _on_step(self) -> bool:
         """
         若 current_year > rl_end_year 则返回 False 结束训练；
-        按 save_*_every_n_steps 配置间隔保存 record / 模型。
+        按 save_record_every_n_steps 配置间隔保存 record。
         """
         from src.worker.save.saver import SAVER # 延迟导入，避免循环导入
 
@@ -98,7 +95,6 @@ class ReinforcementLearningAdapter:
         # 环境配置
         ec = DATA_CACHE_POOL.get_env_config() or {}
         self.rl_end_year = ec.get('rl_end_year', 2024)
-        self.save_model_every_n_steps = ec.get('save_model_every_n_steps', None)
         self.save_record_every_n_steps = ec.get('save_record_every_n_steps', 50)
 
         # 训练配置 
@@ -129,7 +125,6 @@ class ReinforcementLearningAdapter:
         # 回调函数
         self.callback = CustomCallback(
             self.rl_end_year,
-            save_model_every_n_steps=self.save_model_every_n_steps,
             save_record_every_n_steps=self.save_record_every_n_steps,
         )
 

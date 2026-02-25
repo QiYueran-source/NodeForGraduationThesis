@@ -19,7 +19,6 @@ meta：由主机提供，结构见下。约定：顶层 = 固定（环境统一�
 - port: 节点反向代理端口（来自 frpc.state 的 ALLOCATED_PORT），主机用 meta 连接节点时使用
 - env_config: 环境配置
     - rf_end_year: 强化学习结束年份(后续年份不再学习但继续计算)，月份默认12
-    - save_every_n_steps: 每多少步保存一次模型
     - sample_and_shuffle_seed: 采样与滚窗打乱种子；设后所有容器组合采样顺序、每窗口 shuffle 顺序一致，可复现
     - retrain_times: 同一窗口重复训练轮数，默认 1；>1 时本窗口组合用尽后重置游标并打乱再扫一轮，满轮后再滚窗
 - performance_config: 表现计算配置
