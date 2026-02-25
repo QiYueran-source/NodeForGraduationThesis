@@ -59,6 +59,8 @@ class DataCachePool:
         初始化缓存池
         """
         self._cache: Dict[Tuple[str, int, int], Any] = {} # 缓存数据：键为 (code, year, month)，值为数据
+        # 历史上成功加载过的最大年份（用于避免缓存清空后 current_train_year_month 回退）
+        self._max_loaded_year: Optional[int] = None
         
         # 结构化 meta（由主机提供）。约定：顶层键为固定，train_config 仅存随机部分，见本文件顶部注释。
         self._meta: Dict[str, Any] = {
@@ -224,8 +226,22 @@ class DataCachePool:
         with self._lock:
             if self._cache:
                 return max([(year, month) for (_, year, month) in self._cache.keys()])
-            return (self.get_start_year() - 1, 12) # 如果缓存为空，则返回开始年份-1和12月
+            # 缓存为空：优先使用历史上成功加载过的最大年份，避免回退到 start_year-1
+            if self._max_loaded_year is not None:
+                return (self._max_loaded_year, 12)
+            return (self.get_start_year() - 1, 12) # 如果从未加载过任何年份，则返回开始年份-1和12月
         
+    def get_max_loaded_year(self) -> Optional[int]:
+        """获取历史上成功加载过的最大年份"""
+        with self._lock:
+            return self._max_loaded_year
+
+    def update_max_loaded_year(self, year: int) -> None:
+        """更新历史上成功加载过的最大年份（单调不减）"""
+        with self._lock:
+            if self._max_loaded_year is None or year > self._max_loaded_year:
+                self._max_loaded_year = year
+    
     
     # ========== Meta数据接口 ==========
     def get_task_id(self) -> Optional[str]:
