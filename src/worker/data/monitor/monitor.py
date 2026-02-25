@@ -6,6 +6,8 @@
 # 库  
 from logging import CRITICAL
 from re import T
+import os
+import signal
 import time 
 import threading  
 import yaml  
@@ -128,11 +130,18 @@ class DataMonitor:
             if elapsed >= retry_timeout:
                 logger.error(
                     f"year={year} 当前无数据重试超时，已尝试 {attempt} 次，"
-                    f"耗时 {elapsed:.1f}s (retry_timeout={retry_timeout})"
+                    f"耗时 {elapsed:.1f}s (retry_timeout={retry_timeout})；视为致命错误，触发 SIGINT 自杀退出 worker"
                 )
+                # 标记监控器停止，避免后续循环再继续尝试
+                self.started = False
+                # 给当前 worker 进程发送 SIGINT，触发 worker.py 顶层 KeyboardInterrupt → finally: stop()
+                try:
+                    os.kill(os.getpid(), signal.SIGINT)
+                except Exception as e:
+                    logger.warning(f"发送 SIGINT 失败: {e}")
+                # 抛异常终止当前加载逻辑
                 raise Exception(
-                    f"year={year} 当前无数据重试超时 "
-                    f"(elapsed={elapsed:.1f}s, retry_timeout={retry_timeout})"
+                    f"year={year} 当前无数据重试超时 (elapsed={elapsed:.1f}s, retry_timeout={retry_timeout})，已发送 SIGINT 自杀退出 worker"
                 )
 
             logger.warning(
