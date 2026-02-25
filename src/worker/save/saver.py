@@ -337,9 +337,26 @@ class Saver:
         except Exception as e:
             logger.exception(f"发送 meta 异常: {e}")
 
+    def write_end_flag(self):
+        """
+        在 data/task_id 下创建 .end 标志文件，供 stop 最后发送时一并 rsync 到主机，主机据此判断任务已结束。
+        """
+        task_id = DATA_CACHE_POOL.get_task_id()
+        if not task_id:
+            return
+        base = self._get_base_path()
+        if base == Path("/Node/data"):
+            return
+        try:
+            end_path = base / ".end"
+            end_path.write_text("", encoding="utf-8")
+            logger.info(f"已写入结束标志: {end_path}")
+        except Exception as e:
+            logger.warning(f"写入 .end 标志失败: {e}")
+
     def send_perf_and_record(self):
         """
-        只发送 record.json 与 performance_and_reward_*.jsonl 到主机；发送成功后删除本次发送的 perf 文件。
+        只发送 record.json、.end 与 performance_and_reward_*.jsonl 到主机；发送成功后删除本次发送的 perf 文件。
         加锁保证「列清单 + rsync + 删本次列表」原子，避免其他落盘线程刚写的文件被误删。
         task_id / node_id 缺失时不发送、不删文件。
         """
@@ -360,6 +377,7 @@ class Saver:
                 cmd = [
                     "rsync", "-avz",
                     "--include=record.json",
+                    "--include=.end",
                     "--include=performance_and_reward_*.jsonl",
                     "--exclude=*",
                     "--password-file=/Node/rsync.passwd",

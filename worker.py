@@ -264,8 +264,10 @@ def stop():
     # 发送前：先写 checkpoint.json，再复制 model/rl 到 /Node，保证 metadata 与文件一致
     SAVER.write_checkpoint_json()
     SAVER.copy_checkpoint_to_node()
-    
-    # 最后再发一次 perf 与 record，避免 daemon 写盘线程未及发送
+
+    # 在 data/task_id 下创建 .end 标志，与 perf、record 一并 rsync 到主机
+    SAVER.write_end_flag()
+    # 最后再发一次 perf、record 与 .end，避免 daemon 写盘线程未及发送
     SAVER.send_perf_and_record()
 
     # 停止
