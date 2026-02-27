@@ -1,6 +1,6 @@
 # 超参数配置
 worker_process:
-  pass 
+  null 
   
 # 数据层线程  
 # 缓存池配置  
@@ -8,11 +8,11 @@ worker_process:
 # 最大数据(year)  
 # 检测间隔  
 data_thread:
-  min_year: 1 # 仅有1年数据后，获取数据  
-  max_year: 3 # 每次获取，使得存在至少3年数据   
-  check_interval: 10 # 检测间隔(s)  
+  min_year: 2 # 仅有1年数据后，获取数据  
+  max_year: 4 # 每次获取，使得存在至少3年数据   
+  check_interval: 120 # 检测间隔(s)  
   retry_interval: 30 # 重试间隔(s)  
-  retry_timeout: 450 # 重试超时时间(s)  
+  retry_timeout: 72000 # 重试超时时间(s)  
   exception_retry_times: 3 # 异常重试次数
 
 # record线程
