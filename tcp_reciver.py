@@ -89,6 +89,31 @@ def handle_message(message_str: str, socket_client: socket):
         _meta = {} 
         return {"stop": "success"}
 
+    elif req == -2:
+        # 强制停止 worker：先尝试优雅 SIGINT，若在宽限期内仍未退出则发送 SIGKILL
+        if _worker_pid and _is_process_alive(_worker_pid):
+            grace = 10  # 宽限期秒数
+            try:
+                os.kill(_worker_pid, signal.SIGINT)
+                logger.info(f"收到 req=-2，已向 worker 发送 SIGINT，{grace}s 后检查是否退出")
+            except OSError as e:
+                logger.warning(f"发送 SIGINT 失败: {e}")
+
+            time.sleep(grace)
+
+            if _is_process_alive(_worker_pid):
+                logger.warning("worker 对 SIGINT 无响应，发送 SIGKILL 强制退出")
+                try:
+                    os.kill(_worker_pid, signal.SIGKILL)
+                except OSError as e:
+                    logger.warning(f"发送 SIGKILL 失败: {e}")
+        else:
+            logger.info("收到 req=-2，但当前无活跃 worker 进程")
+
+        _worker_pid = None
+        _meta = {}
+        return {"force_kill": "success"}
+
     elif req == 0:
         # 查询状态：以 pid 判断是否在跑，从 record.json 读 task_id / current_year_month
         if _worker_pid and _is_process_alive(_worker_pid):
