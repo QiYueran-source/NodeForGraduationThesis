@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# 仅负责：向注册中心申请端口 + 生成 NODE_NAME，并将二者写入 /Node/frp/frpc.toml。
+# 仅负责：从环境变量 FRP_PORT、NODE_ID 读取端口与节点名，并写入 /Node/frp/frpc.toml。必须设置二者，无兜底。
 
 LOG_FILE="/Node/logs/frpc.log"
 
@@ -28,19 +28,14 @@ if [ ! -f "$CONF" ]; then
     exit 1
 fi
 
-# 向注册中心申请端口
-ALLOCATED_PORT=$(curl -s http://43.139.192.176:8190/register | jq -r '.allocated_port')
-
-# 端口不可用，则退出
-if [ -z "$ALLOCATED_PORT" ] || [ "$ALLOCATED_PORT" = "null" ]; then
-    log_error "无法获取可用端口"
+# 必须使用环境变量 FRP_PORT 和 NODE_ID
+if [ -z "${FRP_PORT}" ] || [ -z "${NODE_ID}" ]; then
+    log_error "必须设置环境变量 FRP_PORT 和 NODE_ID"
     exit 1
 fi
-log_info "获取可用端口: $ALLOCATED_PORT"
-
-# 随机生成 nodeName（node_时间戳_随机数，保证唯一）
-NODE_NAME="node_$(date +%s)_${RANDOM}"
-log_info "生成 nodeName: $NODE_NAME"
+ALLOCATED_PORT="$FRP_PORT"
+NODE_NAME="$NODE_ID"
+log_info "使用环境变量 (NODE_ID=$NODE_NAME, FRP_PORT=$ALLOCATED_PORT)"
 
 # 注入 nodeName 和端口到配置文件（支持模板 name = $nodeName 或已有值覆盖）
 if ! sed -i "s/^name = .*/name = \"$NODE_NAME\"/" "$CONF"; then
