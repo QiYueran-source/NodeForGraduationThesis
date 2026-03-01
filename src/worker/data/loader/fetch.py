@@ -1,13 +1,20 @@
 # 库
 import json
+from pathlib import Path
 from typing import List, Optional, Dict, Tuple, Any
 
-# 自定义组件 
-from src.worker.data.redis import REDIS_CONNECTOR,REDIS_PREFIX_MANAGER
+# 自定义组件
+from src.worker.data.redis import REDIS_CONNECTOR, REDIS_PREFIX_MANAGER
+from src.worker.cache.pool import DATA_CACHE_POOL
 
 # 日志
 from src.utils.logger import get_module_logger
 logger = get_module_logger(__name__, prefix='[DataLoaderFetch]')
+
+# Lua 脚本：原子地将 node_id 追加到 counter key 的 JSON 数组（无则追加）
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_APPEND_NODE_SCRIPT = (_SCRIPT_DIR / "append_node_to_counter.lua").read_text(encoding="utf-8")
+
 
 # 数据加载层
 class DataLoader:
@@ -79,8 +86,8 @@ class DataLoader:
                 # 执行批量获取
                 responses = pipe.execute()
 
-            # 第三步：处理响应（解析 JSON）并批量增加计数器
-            counters_to_incr = []
+            # 第三步：处理响应（解析 JSON）并收集需更新节点列表的 counter 键
+            counters_to_append = []
             for i, response in enumerate(responses):
                 if response is not None:  # 数据存在
                     parsed = self._parse_json(response)
@@ -89,22 +96,25 @@ class DataLoader:
                     month, code = key_mapping[i]
                     result[(month, code)] = parsed
 
-                    # 收集需要增加的计数器键
                     counter_key = self.redis_prefix_manager.build_counter_key(year, month, code)
-                    counters_to_incr.append(counter_key)
+                    counters_to_append.append(counter_key)
 
-            # 第四步：批量增加计数器
-            if counters_to_incr:
+            # 第四步：原子地将本节点 node_id 追加到各 counter 的 JSON 节点列表（Lua 脚本）
+            node_id = DATA_CACHE_POOL.get_node_id()
+            if counters_to_append and node_id:
                 with self.client.pipeline() as pipe:
-                    for counter_key in counters_to_incr:
-                        pipe.incr(counter_key)
-
-                    counter_responses = pipe.execute()
-
-                logger.info(f"批量加载数据: year={year}, 请求={len(data_keys)}, 成功={len(result)}, 计数器更新={len(counters_to_incr)}")
-                        # 成功加载一年数据后打印（仅当本次请求为整年时）
+                    for counter_key in counters_to_append:
+                        pipe.eval(_APPEND_NODE_SCRIPT, 1, counter_key, node_id)
+                    pipe.execute()
+                logger.info(f"批量加载数据: year={year}, 请求={len(data_keys)}, 成功={len(result)}, 节点列表更新={len(counters_to_append)}")
+            elif counters_to_append and not node_id:
+                logger.warning("node_id 为空，跳过 counter 节点列表更新")
+            # 成功加载一年数据后打印（仅当本次请求为整年时）
             if month is None:
-                print(f"成功加载一年数据: year={year}, 请求={len(data_keys)}, 成功={len(result)}")
+                if len(data_keys) != 0 and len(result) != 0:
+                    print(f"成功加载一年数据: year={year}, 请求={len(data_keys)}, 成功={len(result)}")
+                else:
+                    print(f"未加载到数据: year={year}, 准备重试")
         except Exception as e:
             logger.warning(f"批量加载数据失败 year={year}: {e}，返回None")
             return None  
