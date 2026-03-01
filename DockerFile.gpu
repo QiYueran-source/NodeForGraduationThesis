@@ -64,6 +64,7 @@ RUN sudo uv pip install --system --no-cache stable-baselines3[extra] gymnasium \
 ENV PYTHONPATH=/Node
 ENV PYTHONUNBUFFERED=1
 ENV NODE_TYPE=agent_trainer
+ENV USE_NODE_UUID=false
 
 EXPOSE 8191-8220
 

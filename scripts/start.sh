@@ -16,6 +16,13 @@ echo "=== 启动tcp监听进程 ==="
 python /Node/tcp_reciver.py &
 
 # frp启动和检查
+# 先用环境变量 FRP_PORT、NODE_ID 写入 frpc.toml，再启动 frpc
+echo "=== 配置 frp (frp_alloc) ==="
+/Node/scripts/frp/frp_alloc.sh
+if [ $? -ne 0 ]; then
+    echo "[ERROR] frp_alloc 失败，请设置环境变量 FRP_PORT 和 NODE_ID"
+    exit 1
+fi
 echo "=== 启动frp客户端 ==="
 /Node/scripts/frp/frp_start.sh
 if [ $? -ne 0 ]; then

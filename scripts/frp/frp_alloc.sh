@@ -35,6 +35,13 @@ if [ -z "${FRP_PORT}" ] || [ -z "${NODE_ID}" ]; then
 fi
 ALLOCATED_PORT="$FRP_PORT"
 NODE_NAME="$NODE_ID"
+# 若环境变量 USE_NODE_UUID 为 true/1，则在 node_id 后追加 8 位 uuid（默认 false）
+if [ "${USE_NODE_UUID}" = "true" ] || [ "${USE_NODE_UUID}" = "1" ]; then
+    _uuid=$(cat /proc/sys/kernel/random/uuid 2>/dev/null | tr -d '-' | cut -c1-8)
+    if [ -n "$_uuid" ]; then
+        NODE_NAME="${NODE_NAME}_${_uuid}"
+    fi
+fi
 log_info "使用环境变量 (NODE_ID=$NODE_NAME, FRP_PORT=$ALLOCATED_PORT)"
 
 # 注入 nodeName 和端口到配置文件（支持模板 name = $nodeName 或已有值覆盖）
