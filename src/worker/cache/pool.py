@@ -17,6 +17,7 @@ meta：由主机提供，结构见下。约定：顶层 = 固定（环境统一�
 - n: 一个组合中的证券数量（算上现金，共n+1个证券）
 - max_portfolios_num: 对于总共n个证券，最多可构建组合数上限
 - port: 节点反向代理端口（来自 frpc.state 的 ALLOCATED_PORT），主机用 meta 连接节点时使用
+- node_id: 节点 id（由节点从 frp 状态或环境变量 NODE_ID 设置）
 - env_config: 环境配置
     - rf_end_year: 强化学习结束年份(后续年份不再学习但继续计算)，月份默认12
     - sample_and_shuffle_seed: 采样与滚窗打乱种子；设后所有容器组合采样顺序、每窗口 shuffle 顺序一致，可复现
@@ -38,7 +39,6 @@ record: 由节点维护
 - running: 是否正在运行    
 - current_year_month: 当前窗口(year,month)   
 - pid: 进程号  
-- node_id: 节点id (从 frp 状态文件中获取)  
 """
 
 # 库
@@ -97,6 +97,7 @@ class DataCachePool:
                 'model_config': None,
             },
             'port': None,  # 节点反向代理端口（frpc.state 的 ALLOCATED_PORT），主机连接节点时使用
+            'node_id': None,  # 节点 id（由节点从 frp 状态或环境变量 NODE_ID 设置）
         }
 
         # 记录数据（由节点维护），单独字典
@@ -447,14 +448,14 @@ class DataCachePool:
             self._record['pid'] = pid
 
     def get_node_id(self) -> Optional[str]:
-        """获取节点id"""
-        with self._record_lock:
-            return self._record.get('node_id')
+        """获取节点 id（来自 meta）"""
+        with self._meta_lock:
+            return self._meta.get('node_id')
     
     def put_node_id(self, node_id: str):
-        """设置节点id"""
-        with self._record_lock:
-            self._record['node_id'] = node_id
+        """设置节点 id（写入 meta）"""
+        with self._meta_lock:
+            self._meta['node_id'] = node_id
 
     def increment_step_count(self):
         """环境每 step 一次后调用，将 record.step_count 加 1。"""
