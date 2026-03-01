@@ -62,6 +62,22 @@ def _read_record_json(task_id):
         return None
 
 
+def _read_node_id_from_frp_state():
+    """从 /Node/frp/frpc.state 读取 NODE_NAME 作为 node_id，不存在或解析失败返回 None"""
+    path = Path("/Node/frp/frpc.state")
+    if not path.exists():
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("NODE_NAME="):
+                    return line.split("=", 1)[1].strip()
+    except Exception:
+        pass
+    return None
+
+
 def handle_message(message_str: str, socket_client: socket):
     """
     处理收到的消息
@@ -115,7 +131,8 @@ def handle_message(message_str: str, socket_client: socket):
         return {"force_kill": "success"}
 
     elif req == 0:
-        # 查询状态：以 pid 判断是否在跑，从 record.json 读 task_id / current_year_month
+        # 查询状态：以 pid 判断是否在跑，从 record.json 读 task_id / current_year_month，node_id 从 frpc.state 读
+        node_id = _read_node_id_from_frp_state()
         if _worker_pid and _is_process_alive(_worker_pid):
             task_id = _meta.get('task_id')
             current_year_month = None
@@ -127,11 +144,15 @@ def handle_message(message_str: str, socket_client: socket):
                 "running": 1,
                 "task_id": task_id,
                 "current_year_month": current_year_month,
+                "node_id": node_id,
             }
         else:
             _worker_pid = None
-            _meta = {} 
-            response = {"running": 0}
+            _meta = {}
+            response = {
+                "running": 0,
+                "node_id": node_id,
+            }
         return response
 
     elif req == 2:
