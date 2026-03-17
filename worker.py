@@ -53,6 +53,7 @@ def parse_args_and_load_pool():
     DATA_CACHE_POOL.put_end_year(meta['end_year'])
     DATA_CACHE_POOL.put_N(meta['N'])
     DATA_CACHE_POOL.put_stock_list(meta['stock_list'])
+    DATA_CACHE_POOL.put_mix_weight(meta['mix_weight'])
     year, month = meta['earliest_year_month']
     DATA_CACHE_POOL.put_earliest_year_month(year, month)
     DATA_CACHE_POOL.put_n(meta['n'])

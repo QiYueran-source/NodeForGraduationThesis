@@ -2,3 +2,4 @@ redis
 dotenv
 pyyaml
 safetensors
+polars>=0.20.0

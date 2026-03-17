@@ -11,9 +11,11 @@ import json
 import shutil
 import subprocess
 import threading
+import random
 from datetime import datetime
 from pathlib import Path
 from safetensors.torch import save_file
+import polars as pl
 
 # 自定义组件
 from src.worker.cache.pool import DATA_CACHE_POOL
@@ -28,7 +30,11 @@ logger = get_module_logger(__name__, prefix='[Saver]')
 class Saver:
     def __init__(self):
         # 配置
+        self._mix_weight = DATA_CACHE_POOL.get_mix_weight()
+        self._short_limit = DATA_CACHE_POOL.get_short_limit()
         self._record_config = {} 
+        self._heter = None
+        self._seed = DATA_CACHE_POOL.get_train_config().get('seed')
 
         # 文件游标与锁（保证 segment 与文件名一致，多线程安全）
         self._performance_and_reward_snapshot_cursor = 0
@@ -39,6 +45,7 @@ class Saver:
 
         # 加载配置 
         self._load_config()
+        self._load_heter()
 
     def _load_config(self):
         """加载配置"""
@@ -48,6 +55,18 @@ class Saver:
         except Exception as e:
             logger.error(f"加载配置失败: {e}")
             raise 
+    
+    def _load_heter(self):
+        """加载异质性"""
+        self._heter = pl.read_ndjson('/Node/scripts/data/heter.jsonl',
+            schema_overrides={'portfolio': pl.Utf8, 'date':pl.Date})
+        self._heter = self._heter.with_columns(
+                            pl.col("portfolio")
+                            .map_elements(lambda x: [x])  # 每个元素包一层 list
+                            .alias("portfolio"),
+                            pl.col('date').dt.year().alias('year'),
+                            pl.col('date').dt.month().alias('month')
+                        ).select(pl.col(['year', 'month', 'portfolio', 'sum']))
 
     def _get_base_path(self) -> Path:
         """按当前 task_id 返回基目录并确保存在"""
@@ -117,14 +136,44 @@ class Saver:
             logger.info(f"[p&r] 跳过保存快照: 无增量 (year, month)=({year}, {month})")
             return
         logger.info(f"[p&r] 保存增量 (year, month)=({year}, {month}), 条数={len(incremental_result)}")
-        lines = []
+        records = []
         for key, data in incremental_result.items():
-            if self._should_skip_perf_entry(data):
-                continue
             y, m, portfolio = key
-            obj = {"year": y, "month": m, "portfolio": list(portfolio), "data": self._serialize_perf(data)}
-            obj = self._round_floats_in(obj, 4)
-            lines.append(json.dumps(obj, ensure_ascii=False))
+            obj = {
+                "year": y,
+                "month": m,
+                "portfolio": list(portfolio),
+                "data": self._serialize_perf(data),
+            }
+            records.append(obj)
+
+        if not records:
+            logger.info(f"[p&r] 本次增量为空，跳过落盘 (year, month)=({year}, {month})")
+            return
+
+        # 转df
+        df = pl.DataFrame(records)
+
+        if "data" in df.columns:
+            df = df.with_columns(
+                pl.col("data")
+                .struct.field("performance")
+                .list.get(0)
+                .abs()
+                .alias("_perf0_abs")
+            )
+            df = df.filter(pl.col("_perf0_abs") > self._FILTER_TOL)
+            df = df.drop("_perf0_abs")
+        df = self._mix(df, self._mix_weight)
+
+        if df.height == 0:
+            logger.info(f"[p&r] 本次增量经筛选后为空，跳过落盘 (year, month)=({year}, {month})")
+            return
+
+        processed_records = [
+            self._round_floats_in(rec, 4) for rec in df.to_dicts()
+        ]
+        lines = [json.dumps(obj, ensure_ascii=False) for obj in processed_records]
         with self._snapshot_lock:
             if segment:
                 self._performance_and_reward_snapshot_cursor += 1
@@ -399,6 +448,58 @@ class Saver:
             logger.warning("发送 perf 与 record 超时，未删除本地 perf 文件")
         except Exception as e:
             logger.exception(f"发送 perf 与 record 异常: {e}")
+
+
+    def _mix(self, df: pl.DataFrame, mix_weight: float) -> pl.DataFrame:
+        random.seed(self._seed)
+        df = df.with_columns(pl.col('data').struct.unnest())
+        df = df.with_columns(
+            pl.col('decision_weights').list.get(0).alias('_weight'),
+            pl.col('decision_weights').list.get(1).alias('_risk_free_weight')
+        )
+        df = df.with_columns((pl.col("performance").list.get(0) / (pl.col('_weight') + 1e-6)).alias("_rtr"))
+        df = df.join(self._heter, on=['year','month','portfolio'], how='left')
+        heter_df = df.filter(pl.col('sum') == 3)
+        not_heter_df = df.filter((pl.col('sum').is_null()) | (pl.col('sum') != 3))
+        pos_df = not_heter_df.filter(pl.col('reward') >= 0)
+        neg_df = not_heter_df.filter(pl.col('reward') < 0)
+        if not heter_df.is_empty():
+            kh = (self._short_limit - (1-self._short_limit)) / (0.03 - (-0.03))
+            heter_df = heter_df.with_columns(
+                (kh * (pl.col('_rtr') - (-0.03)) + (1-self._short_limit)).alias('_fix_weight')
+            )
+            heter_df = heter_df.with_columns(
+                (pl.col('_weight') * (1-mix_weight) + mix_weight * pl.col('_fix_weight')).alias('_weight')
+            )
+            heter_df = heter_df.with_columns(pl.col('reward') - random.uniform(0.01, 0.05))           
+            heter_df = heter_df.drop('_fix_weight')
+
+        if not neg_df.is_empty():
+            kn = (1-self._short_limit - self._short_limit) / (0.03 - (-0.01))
+            neg_df = neg_df.with_columns(
+                (kn * (pl.col('_rtr') - (-0.01)) + self._short_limit).alias('_fix_weight')
+            )
+            neg_df = neg_df.with_columns(
+                (pl.col('_weight') * (1-mix_weight) + mix_weight * pl.col('_fix_weight')).alias('_weight')
+            )
+            neg_df = neg_df.with_columns(pl.col('reward') + random.uniform(0.01, 0.05))
+            neg_df = neg_df.drop('_fix_weight')
+
+        df_list = [heter_df, pos_df, neg_df]
+        df_list = [df for df in df_list if not df.is_empty()]
+        if df_list:
+            df = pl.concat(df_list)
+
+        df = df.with_columns(pl.col('_weight').clip(self._short_limit, 1-self._short_limit).alias('_weights'))
+        df = df.with_columns((1 - pl.col('_weight')).alias('_risk_free_weight'))
+
+        df = df.with_columns(pl.concat_list(pl.col('_weight'), pl.col('_risk_free_weight')).alias('decision_weights'))
+        df = df.drop('_weight', '_risk_free_weight', '_rtr','sum')
+
+        df = df.with_columns(pl.struct(pl.col('decision_weights'), pl.col('performance'), pl.col('normalized_performance'), pl.col('reward')).alias('data'))
+        df = df.drop('decision_weights', 'performance', 'normalized_performance', 'reward')
+        return df
+
 
 SAVER = Saver()
 

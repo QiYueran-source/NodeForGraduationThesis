@@ -1,6 +1,6 @@
 {
     "name": "Node Agent Development",
-    "image": "node:gpu",
+    "image": "node_predict:gpu",
     
     "containerEnv": {
         "NODE_ID": "dev_node_001",

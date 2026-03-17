@@ -71,6 +71,7 @@ class DataCachePool:
             'n': None,  # 固定，顶层。一个组合中的证券数量（算上现金共 n+1 个）
             'max_portfolios_num': None,  # 固定，顶层。可构建组合数上限
             'env_config': None,  # 固定，顶层。含 rf_end_year
+            'mix_weight': None, # 兜底权重
             'performance_config': None,  # 固定，顶层。含 risk_free_rate；vol/sharpe/mdd 窗口用 train_config.m
             'factors_list': [
                                 'absacc', 'acc', 'accp', 'ag', 'am', 'ato',
@@ -371,6 +372,16 @@ class DataCachePool:
             self._meta['end_year'] = year
             self._meta['end_month'] = 12
     
+    def get_mix_weight(self) -> Optional[float]:
+        """获取兜底权重"""
+        with self._meta_lock:
+            return self._meta.get('mix_weight')
+    
+    def put_mix_weight(self, weight: float):
+        """设置兜底权重"""
+        with self._meta_lock:
+            self._meta['mix_weight'] = weight
+    
     def get_short_limit(self) -> Optional[float]:
         """获取短限制"""
         with self._meta_lock:
@@ -461,6 +472,8 @@ class DataCachePool:
         """环境每 step 一次后调用，将 record.step_count 加 1。"""
         with self._record_lock:
             self._record['step_count'] = self._record.get('step_count', 0) + 1
+
+
 
 # 全局实例  
 DATA_CACHE_POOL = DataCachePool() 
