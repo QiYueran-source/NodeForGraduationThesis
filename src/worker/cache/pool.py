@@ -66,6 +66,7 @@ class DataCachePool:
         self._meta: Dict[str, Any] = {
             'task_id': None,
             'start_year': None,
+            'end_year': None,
             'N': None,
             'stock_list': [],
             'n': None,  # 固定，顶层。一个组合中的证券数量（算上现金共 n+1 个）
@@ -90,6 +91,10 @@ class DataCachePool:
                                 'size_ia', 'skew', 'sp', 'std_dvol', 'std_turn', 'stdacc', 
                                 'tang', 'taxchg', 'turn', 'vol', 'volumed'
                             ],
+            # 运行模式与落盘策略（由 meta 顶层控制）
+            'use_mlp_predict': False,
+            'mix_weight': 0.0,
+            'mlp_predict_config': None,  # MLP 预测可变配置（hidden_dim/lr/weight_decay/epochs/batch_size/init/mask_seed）；mask_len/m 用 train_config，full_dim 写死 88，zscore 主机端已做、不配置
             'train_config': {  # 仅随机部分，结构见本文件顶部【train_config = 随机】
                 'seed': None,
                 'm': None,
@@ -380,6 +385,42 @@ class DataCachePool:
         """设置做空限制"""
         with self._meta_lock:
             self._meta['short_limit'] = limit
+
+    def get_use_mlp_predict(self) -> bool:
+        """是否启用 MLP 预测模式（meta 顶层 use_mlp_predict）"""
+        with self._meta_lock:
+            return bool(self._meta.get('use_mlp_predict', False))
+
+    def put_use_mlp_predict(self, value: bool):
+        """设置是否启用 MLP 预测模式（由 parse_args 从 meta 写入）"""
+        with self._meta_lock:
+            self._meta['use_mlp_predict'] = bool(value)
+
+    def get_mix_weight(self) -> float:
+        """p&r 混合权重（meta 顶层 mix_weight，0 表示不混合）"""
+        with self._meta_lock:
+            try:
+                return float(self._meta.get('mix_weight', 0.0))
+            except (TypeError, ValueError):
+                return 0.0
+
+    def put_mix_weight(self, value: float):
+        """设置 p&r 混合权重（由 parse_args 从 meta 写入）"""
+        with self._meta_lock:
+            try:
+                self._meta['mix_weight'] = float(value)
+            except (TypeError, ValueError):
+                self._meta['mix_weight'] = 0.0
+
+    def get_mlp_predict_config(self) -> Optional[Dict[str, Any]]:
+        """MLP 预测可变配置（meta 顶层 mlp_predict_config），无则返回 None"""
+        with self._meta_lock:
+            return self._meta.get('mlp_predict_config')
+
+    def put_mlp_predict_config(self, value: Optional[Dict[str, Any]]):
+        """设置 MLP 预测配置（由 parse_args 从 meta 写入，为 None 或 dict）"""
+        with self._meta_lock:
+            self._meta['mlp_predict_config'] = value if isinstance(value, dict) else None
 
     def get_checkpoint(self) -> bool:
         """是否使用断点（从 meta.checkpoint 读取，True 时在 train 前尝试加载 /Node/checkpoint.safetensors）"""

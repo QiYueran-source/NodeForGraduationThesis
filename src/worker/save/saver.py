@@ -11,6 +11,7 @@ import json
 import shutil
 import subprocess
 import threading
+import numbers
 from datetime import datetime
 from pathlib import Path
 from safetensors.torch import save_file
@@ -63,13 +64,17 @@ class Saver:
         return {k: list(v) if isinstance(v, tuple) else v for k, v in data.items()}
 
     def _round_floats_in(self, obj, ndigits: int):
-        """递归将 dict/list 中的 float 统一保留 ndigits 位小数，便于 JSON 落盘可读。"""
+        """
+        递归将 dict/list 中的数值统一保留 ndigits 位小数，便于 JSON 落盘可读。
+        同时兼容 numpy.float32 / numpy.float64 等 numbers.Real 子类。
+        """
         if isinstance(obj, dict):
             return {k: self._round_floats_in(v, ndigits) for k, v in obj.items()}
         if isinstance(obj, list):
             return [self._round_floats_in(v, ndigits) for v in obj]
-        if isinstance(obj, float):
-            return round(obj, ndigits)
+        # 既包含内置 float/int，也包含 numpy.float32 等标量
+        if isinstance(obj, numbers.Real) and not isinstance(obj, bool):
+            return round(float(obj), ndigits)
         return obj
 
     _FILTER_TOL = 1e-6  # 落盘前清理：权重/收益率在此范围内视为 0 或 1
@@ -118,9 +123,9 @@ class Saver:
             return
         logger.info(f"[p&r] 保存增量 (year, month)=({year}, {month}), 条数={len(incremental_result)}")
         # 训练阶段保持 RewardManager._record 中的数据“干净”，仅在落盘到 JSON 时根据 mix_weight 做受控泄露：
-        # reward_out = (1-w) * 预测收益(百分值) + w * 真实收益(百分值)
-        tc = DATA_CACHE_POOL.get_train_config() or {}
-        mix_weight = float(tc.get("mix_weight", 0.0))
+        # mix_weight 为 meta 顶层字段：reward_out = (1-w) * 预测收益(原始收益率) + w * 真实收益(原始收益率)
+        mix_weight = DATA_CACHE_POOL.get_mix_weight()
+        use_mlp = DATA_CACHE_POOL.get_use_mlp_predict()
         if mix_weight != 0.0:
             logger.info(f"[p&r] 使用 mix_weight={mix_weight} 混合预测收益与真实收益")
 
@@ -133,24 +138,59 @@ class Saver:
             # 序列化前在副本上做混合，避免修改内存中的 _record
             data_serialized = self._serialize_perf(data)
             try:
-                pred = data_serialized.get("reward")
-                perf = data_serialized.get("performance")
-                real = None
-                if perf and len(perf) >= 1:
-                    real = float(perf[0])
-                if pred is not None and real is not None:
-                    # pred 约定为预测收益的百分值；real 为原始收益，需要 *100 对齐单位
-                    reward_out = (1.0 - mix_weight) * float(pred) + mix_weight * (real * 100.0)
-                    logger.debug(
-                        f\"[p&r] 混合 reward: ym=({y},{m}), portfolio={portfolio}, "
-                        f"pred={float(pred):.6f}, real={real:.6f}, out={reward_out:.6f}, w={mix_weight}\"
-                    )
-                    data_serialized[\"reward\"] = reward_out
-            except Exception as e:
-                logger.warning(f"[p&r] 混合预测收益与真实收益失败，使用原始 reward: {e}")
+                if use_mlp and ("predict_return" in data_serialized or "real_return" in data_serialized):
+                    # MLP 模式：RewardManager 已写入 predict_return/real_return/stock
+                    pred_raw = data_serialized.get("predict_return")
+                    real_raw = data_serialized.get("real_return")
+                else:
+                    # RL 模式或旧结构：从 reward/performance 中推导
+                    pred_raw = data_serialized.get("reward")  # 预测收益（原始收益率小数）
+                    perf = data_serialized.get("performance")
+                    real_raw = None
+                    if perf and len(perf) >= 1:
+                        real_raw = float(perf[0])
 
-            obj = {"year": y, "month": m, "portfolio": list(portfolio), "data": data_serialized}
-            obj = self._round_floats_in(obj, 4)
+                mixed_pred = pred_raw
+                if mix_weight != 0.0 and pred_raw is not None and real_raw is not None:
+                    mixed_pred = (1.0 - mix_weight) * float(pred_raw) + mix_weight * float(real_raw)
+                    logger.debug(
+                        f"[p&r] 混合 predict_return: ym=({y},{m}), portfolio={portfolio}, "
+                        f"pred_raw={float(pred_raw):.6f}, real={real_raw:.6f}, "
+                        f"mixed={mixed_pred:.6f}, w={mix_weight}"
+                    )
+            except Exception as e:
+                logger.warning(f"[p&r] 混合预测收益与真实收益失败，使用原始预测值: {e}")
+                mixed_pred = data_serialized.get("predict_return") if use_mlp else data_serialized.get("reward")
+                real_raw = data_serialized.get("real_return") if use_mlp else (real_raw if "real_raw" in locals() else None)
+
+            # 简化落盘结构：按单证券保存 year, month, stock, predict_return, real_return
+            stock_code = None
+            try:
+                if isinstance(portfolio, (list, tuple)) and len(portfolio) == 1:
+                    stock_code = portfolio[0]
+                else:
+                    stock_code = ":".join(portfolio)
+            except Exception:
+                stock_code = str(portfolio)
+
+            # 确保可 JSON 序列化：将可能的 numpy.float32 / torch.float32 转为内置 float
+            try:
+                mixed_pred_out = float(mixed_pred) if mixed_pred is not None else None
+            except (TypeError, ValueError):
+                mixed_pred_out = mixed_pred
+            try:
+                real_raw_out = float(real_raw) if real_raw is not None else None
+            except (TypeError, ValueError):
+                real_raw_out = real_raw
+
+            obj = {
+                "year": y,
+                "month": m,
+                "stock": stock_code,
+                "predict_return": mixed_pred_out,
+                "real_return": real_raw_out,
+            }
+            obj = self._round_floats_in(obj, 6)
             lines.append(json.dumps(obj, ensure_ascii=False))
         with self._snapshot_lock:
             if segment:

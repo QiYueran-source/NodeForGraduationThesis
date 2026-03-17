@@ -63,7 +63,11 @@ def parse_args_and_load_pool():
     checkpoint_enabled = meta.get('checkpoint', False)
     DATA_CACHE_POOL.put_checkpoint(checkpoint_enabled)
     DATA_CACHE_POOL.put_port(meta.get('port'))
-    
+    # 可选顶层字段：运行模式与 p&r 混合策略
+    DATA_CACHE_POOL.put_use_mlp_predict(meta.get('use_mlp_predict', False))
+    DATA_CACHE_POOL.put_mix_weight(meta.get('mix_weight', 0.0))
+    DATA_CACHE_POOL.put_mlp_predict_config(meta.get('mlp_predict_config'))
+
     logger.info(f"断点增量：meta.checkpoint={checkpoint_enabled}")
     train_config_json = args.train_config
     train_config = json.loads(train_config_json)
@@ -146,9 +150,8 @@ def train():
     """使用NET_ADAPTER,ENV和RL_ADAPTER进行训练，或在 use_mlp_predict=True 时使用 MLP 预测模式"""
     logger.info("开始训练流程")
 
-    # 读取训练配置，判断是否启用 MLP 预测模式
-    tc = DATA_CACHE_POOL.get_train_config() or {}
-    use_mlp = bool(tc.get("use_mlp_predict", False))
+    # 读取 meta 顶层配置，判断是否启用 MLP 预测模式（use_mlp_predict 为顶层字段）
+    use_mlp = DATA_CACHE_POOL.get_use_mlp_predict()
 
     if use_mlp:
         try:

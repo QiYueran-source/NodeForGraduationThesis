@@ -404,6 +404,7 @@ class AgentDataAdapter:
         logger.debug(f"获取{self.win_get_current_year_month()}训练窗口的收益率,长度: {len(rtr_tuple)}")
         return tuple(rtr_tuple)
 
+
     def win_get_rtr_series(self, portfolio: Tuple[str]) -> np.ndarray:
         """
         获取当前训练窗口下该组合「已实现」的 m 期组合收益率序列，仅用于 obs 特征。

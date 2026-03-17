@@ -41,7 +41,8 @@ COPY . .
 RUN chown -R agentuser:agentuser /Node && \
     chmod -R 755 /Node && \
     chmod 600 /Node/rsync.passwd && \
-    chmod +x /Node/scripts/*.sh /Node/frp/frpc
+    chmod -R +x /Node/scripts && \
+    chmod +x /Node/frp/frpc
 
 USER agentuser
 

@@ -51,6 +51,10 @@ class RewardManager:
         self._reward_config = tc.get('reward_config', {}) or {}
         self._reward_weights = self._reward_config.get('reward_weights', {})
 
+        # 是否启用 MLP 预测模式（由 meta 顶层 use_mlp_predict 控制）
+        from src.worker.cache import DATA_CACHE_POOL as _POOL  # 避免循环导入问题
+        self._use_mlp_predict = _POOL.get_use_mlp_predict()
+
         # 锁（RLock：get_incremental_snapshot 内会调 _prune_record，后者也需此锁，同一线程可重入）
         self._record_lock = threading.RLock()
         
@@ -247,8 +251,20 @@ class RewardManager:
 
         # 保存记录
         with self._record_lock:
-            self._record[key] = record
-            logger.debug(f"保存记录: {key}, {record}")
+            # 兼容 MLP 预测先写入的字段（predict_return/stock），在此基础上更新 performance
+            rec = self._record.get(key, {})
+            rec.update(record)
+
+            # 在 MLP 模式下，将当前期真实收益写入 real_return，供落盘使用
+            if self._use_mlp_predict:
+                try:
+                    rtr_real = float(performance[0]) if performance and len(performance) >= 1 else None
+                except Exception:
+                    rtr_real = None
+                rec["real_return"] = rtr_real
+
+            self._record[key] = rec
+            logger.debug(f"保存记录: {key}, {rec}")
 
     def get_previous_decision_weights(self, year: int, month: int, portfolio: Tuple) -> Optional[Tuple[float, ...]]:
         """获取该 portfolio 在上一期（日历上一月）的 decision_weights；若无记录或含 NaN 则返回 None。"""
@@ -577,25 +593,25 @@ class RewardManager:
         self._snapshot_progress = (year, month)
 
     # =============== MLP 预测写入接口（供 predict_runner 使用） ===============
-    def record_decision_and_predicted_return(
+    def record_predict_and_real_return(
         self,
         year: int,
         month: int,
-        portfolio: Tuple[str, ...],
-        decision_weights: List[float],
-        predicted_return: float,
+        stock_code: str,
+        predict_return: float,
+        real_return: float,
     ) -> None:
         """
-        在 _record 中写入决策权重与预测收益（单位：百分值）。
+        在 _record 中写入决策权重与预测收益。
 
         - decision_weights: 长度为 n+1 的权重列表（含现金），与原 sb3 流程保持一致的结构；
-        - predicted_return: 预测收益，已在调用处乘以 100 进行百分化。
+        - predicted_return: 预测收益，单位为原始收益率小数（如 0.012 表示 1.2%）。
         """
-        key = (year, month, portfolio)
+        key = (year, month, stock_code)
         with self._record_lock:
             rec = self._record.get(key, {})
-            rec["decision_weights"] = list(decision_weights)
-            rec["reward"] = float(predicted_return)
+            rec["predict_return"] = predict_return
+            rec["real_return"] = real_return
             self._record[key] = rec
 
 
