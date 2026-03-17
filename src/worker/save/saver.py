@@ -164,7 +164,10 @@ class Saver:
             )
             df = df.filter(pl.col("_perf0_abs") > self._FILTER_TOL)
             df = df.drop("_perf0_abs")
-        df = self._mix(df, self._mix_weight)
+        try:
+            df = self._mix(df, self._mix_weight)
+        except Exception as e:
+            logger.error(f"失败: {e}")
 
         if df.height == 0:
             logger.info(f"[p&r] 本次增量经筛选后为空，跳过落盘 (year, month)=({year}, {month})")
