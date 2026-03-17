@@ -40,3 +40,6 @@ rsync.passwd
 checkpoint.json
 checkpoint.safetensors
 checkpoint_rl.zip
+
+# 容器
+create_containers.sh

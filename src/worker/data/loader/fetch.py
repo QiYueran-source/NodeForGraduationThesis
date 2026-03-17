@@ -109,12 +109,11 @@ class DataLoader:
                 logger.info(f"批量加载数据: year={year}, 请求={len(data_keys)}, 成功={len(result)}, 节点列表更新={len(counters_to_append)}")
             elif counters_to_append and not node_id:
                 logger.warning("node_id 为空，跳过 counter 节点列表更新")
-            # 成功加载一年数据后打印（仅当本次请求为整年时）
-            if month is None:
-                if len(data_keys) != 0 and len(result) != 0:
-                    print(f"成功加载一年数据: year={year}, 请求={len(data_keys)}, 成功={len(result)}")
-                else:
-                    print(f"未加载到数据: year={year}, 准备重试")
+            # 有数据则报成功，无数据则报警告
+            if len(result) > 0:
+                print(f"成功加载数据: year={year}, 请求={len(data_keys)}, 成功={len(result)}")
+            else:
+                logger.warning(f"未加载到数据: year={year}, 准备重试")
         except Exception as e:
             logger.warning(f"批量加载数据失败 year={year}: {e}，返回None")
             return None  

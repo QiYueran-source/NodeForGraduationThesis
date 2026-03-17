@@ -14,4 +14,4 @@ rsync -avz \
     --include='performance_and_reward_*.jsonl' \
     --exclude='*' \
     /Node/data/"$task_id"/ \
-    nodeuser@192.168.1.4::node_result/"$task_id"/"$node_id"
+    nodeuser@192.168.1.6::node_result/"$task_id"/"$node_id"
