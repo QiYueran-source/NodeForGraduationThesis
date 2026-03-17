@@ -143,25 +143,8 @@ def start():
 
 
 def train():
-    """使用NET_ADAPTER,ENV和RL_ADAPTER进行训练，或在 use_mlp_predict=True 时使用 MLP 预测模式"""
-    logger.info("开始训练流程")
-
-    # 读取训练配置，判断是否启用 MLP 预测模式
-    tc = DATA_CACHE_POOL.get_train_config() or {}
-    use_mlp = bool(tc.get("use_mlp_predict", False))
-
-    if use_mlp:
-        try:
-            from src.predict.predict_runner import run_mlp_training_and_prediction
-        except ImportError as e:
-            logger.error(f"use_mlp_predict 为 True，但无法导入 MLP 预测模块: {e}")
-            return
-
-        logger.info("use_mlp_predict=True，使用 MLP 窗口训练+预测模式，跳过 sb3 强化学习")
-        run_mlp_training_and_prediction()
-        return
-
-    logger.info("使用 sb3 强化学习模式")
+    """使用NET_ADAPTER,ENV和RL_ADAPTER进行训练"""
+    logger.info("开始强化学习训练")
     # 断点：每次 if 过滤一种不可用情况，全部通过后再加载
     checkpoint_json_path = Path("/Node/checkpoint.json")
     checkpoint_rl_path = Path("/Node/checkpoint_rl")

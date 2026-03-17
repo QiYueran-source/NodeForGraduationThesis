@@ -576,5 +576,27 @@ class RewardManager:
         """仅在滚窗或结束流程时调用，将 _snapshot_progress 设为该 (year, month)。"""
         self._snapshot_progress = (year, month)
 
+    # =============== MLP 预测写入接口（供 predict_runner 使用） ===============
+    def record_decision_and_predicted_return(
+        self,
+        year: int,
+        month: int,
+        portfolio: Tuple[str, ...],
+        decision_weights: List[float],
+        predicted_return: float,
+    ) -> None:
+        """
+        在 _record 中写入决策权重与预测收益（单位：百分值）。
+
+        - decision_weights: 长度为 n+1 的权重列表（含现金），与原 sb3 流程保持一致的结构；
+        - predicted_return: 预测收益，已在调用处乘以 100 进行百分化。
+        """
+        key = (year, month, portfolio)
+        with self._record_lock:
+            rec = self._record.get(key, {})
+            rec["decision_weights"] = list(decision_weights)
+            rec["reward"] = float(predicted_return)
+            self._record[key] = rec
+
 
 REWARD_MANAGER = RewardManager()

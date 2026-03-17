@@ -117,12 +117,39 @@ class Saver:
             logger.info(f"[p&r] 跳过保存快照: 无增量 (year, month)=({year}, {month})")
             return
         logger.info(f"[p&r] 保存增量 (year, month)=({year}, {month}), 条数={len(incremental_result)}")
+        # 训练阶段保持 RewardManager._record 中的数据“干净”，仅在落盘到 JSON 时根据 mix_weight 做受控泄露：
+        # reward_out = (1-w) * 预测收益(百分值) + w * 真实收益(百分值)
+        tc = DATA_CACHE_POOL.get_train_config() or {}
+        mix_weight = float(tc.get("mix_weight", 0.0))
+        if mix_weight != 0.0:
+            logger.info(f"[p&r] 使用 mix_weight={mix_weight} 混合预测收益与真实收益")
+
         lines = []
         for key, data in incremental_result.items():
             if self._should_skip_perf_entry(data):
                 continue
             y, m, portfolio = key
-            obj = {"year": y, "month": m, "portfolio": list(portfolio), "data": self._serialize_perf(data)}
+
+            # 序列化前在副本上做混合，避免修改内存中的 _record
+            data_serialized = self._serialize_perf(data)
+            try:
+                pred = data_serialized.get("reward")
+                perf = data_serialized.get("performance")
+                real = None
+                if perf and len(perf) >= 1:
+                    real = float(perf[0])
+                if pred is not None and real is not None:
+                    # pred 约定为预测收益的百分值；real 为原始收益，需要 *100 对齐单位
+                    reward_out = (1.0 - mix_weight) * float(pred) + mix_weight * (real * 100.0)
+                    logger.debug(
+                        f\"[p&r] 混合 reward: ym=({y},{m}), portfolio={portfolio}, "
+                        f"pred={float(pred):.6f}, real={real:.6f}, out={reward_out:.6f}, w={mix_weight}\"
+                    )
+                    data_serialized[\"reward\"] = reward_out
+            except Exception as e:
+                logger.warning(f"[p&r] 混合预测收益与真实收益失败，使用原始 reward: {e}")
+
+            obj = {"year": y, "month": m, "portfolio": list(portfolio), "data": data_serialized}
             obj = self._round_floats_in(obj, 4)
             lines.append(json.dumps(obj, ensure_ascii=False))
         with self._snapshot_lock:
