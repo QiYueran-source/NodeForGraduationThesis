@@ -164,6 +164,9 @@ class Saver:
             )
             df = df.filter(pl.col("_perf0_abs") > self._FILTER_TOL)
             df = df.drop("_perf0_abs")
+        if df.height == 0:
+            logger.info(f"[p&r] 大量收益为0，跳过落盘 (year, month)=({year}, {month})")
+            return
         try:
             df = self._mix(df, self._mix_weight)
         except Exception as e:
@@ -493,7 +496,7 @@ class Saver:
         if df_list:
             df = pl.concat(df_list)
 
-        df = df.with_columns(pl.col('_weight').clip(self._short_limit, 1-self._short_limit).alias('_weights'))
+        df = df.with_columns(pl.col('_weight').clip(self._short_limit, 1-self._short_limit).alias('_weight'))
         df = df.with_columns((1 - pl.col('_weight')).alias('_risk_free_weight'))
 
         df = df.with_columns(pl.concat_list(pl.col('_weight'), pl.col('_risk_free_weight')).alias('decision_weights'))

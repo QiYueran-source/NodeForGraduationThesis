@@ -17,7 +17,7 @@ data_thread:
 
 # record线程
 record_thread:
-  record_interval: 3 # 写入间隔(s)  
+  record_interval: 60 # 写入间隔(s)  
 
 
 # agent数据获取配置

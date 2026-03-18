@@ -95,14 +95,14 @@ def handle_message(message_str: str, socket_client: socket):
     req = int(message.pop('req'))
 
     if req == -1:
-        # 停止 worker：发 SIGINT，worker 会走 KeyboardInterrupt 并执行 stop/复制到 /Node
+        # 停止 worker：直接 SIGKILL 结束进程，不触发 KeyboardInterrupt
         if _worker_pid and _is_process_alive(_worker_pid):
             try:
-                os.kill(_worker_pid, signal.SIGINT)
+                os.kill(_worker_pid, signal.SIGKILL)
             except OSError as e:
-                logger.warning(f"发送 SIGINT 失败: {e}")
+                logger.warning(f"发送 SIGKILL 失败: {e}")
         _worker_pid = None
-        _meta = {} 
+        _meta = {}
         return {"stop": "success"}
 
     elif req == -2:
