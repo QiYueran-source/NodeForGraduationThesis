@@ -28,7 +28,7 @@ def run_mlp_training_and_prediction() -> None:
     mask_len = int(tc.get("mask_len", 60))
     hidden_dim = int(tc.get("mlp_hidden_dim", 128))
     lr = float(tc.get("mlp_lr", 1e-3))
-    seed = int(tc.get('train_config', {}).get('seed', 42))
+    seed = int(tc.get('seed', 42))
     epochs = int(tc.get("mlp_epochs", 20))
     batch_size = int(tc.get("mlp_batch_size", 32))
 
