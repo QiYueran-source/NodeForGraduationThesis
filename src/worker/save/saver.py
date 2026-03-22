@@ -15,6 +15,7 @@ import random
 from datetime import datetime
 from pathlib import Path
 from safetensors.torch import save_file
+import numpy as np 
 import polars as pl
 
 # 自定义组件
@@ -58,7 +59,7 @@ class Saver:
     
     def _load_heter(self):
         """加载异质性"""
-        self._heter = pl.read_ndjson('/Node/scripts/data/heter.jsonl',
+        self._heter = pl.read_ndjson('/Node/data/outer/heter.jsonl',
             schema_overrides={'portfolio': pl.Utf8, 'date':pl.Date})
         self._heter = self._heter.with_columns(
                             pl.col("portfolio")
@@ -66,7 +67,7 @@ class Saver:
                             .alias("portfolio"),
                             pl.col('date').dt.year().alias('year'),
                             pl.col('date').dt.month().alias('month')
-                        ).select(pl.col(['year', 'month', 'portfolio', 'sum']))
+                        ).select(pl.col(['year', 'month', 'portfolio','sum']))
 
     def _get_base_path(self) -> Path:
         """按当前 task_id 返回基目录并确保存在"""
@@ -175,6 +176,8 @@ class Saver:
         if df.height == 0:
             logger.info(f"[p&r] 本次增量经筛选后为空，跳过落盘 (year, month)=({year}, {month})")
             return
+        
+        df = df.sort(['year', 'month', 'portfolio'])
 
         processed_records = [
             self._round_floats_in(rec, 4) for rec in df.to_dicts()
@@ -457,54 +460,98 @@ class Saver:
 
 
     def _mix(self, df: pl.DataFrame, mix_weight: float) -> pl.DataFrame:
-        random.seed(self._seed)
-        df = df.with_columns(pl.col('data').struct.unnest())
+        E = 0.08 
+        A_RE, B_RE = 0.2, 15
+        BASE_NORM_MU = 0.35 
+        BASE_UNIFORM_UPPER = 0.15
+        BASE_UNIFORM_LOWER = -0.05
+        MU_SCALE_POS = 21.4
+        MU_SCALE_NEG = 20.3
+        MU_POWER = 0.95 
+        T_DF=62
+        HETER_DETER = -9.92 
+        HETER_NORM_SIG = 0.01
+        
+        if mix_weight > 1:
+            mix_weight = 1
+        if mix_weight < 0:
+            mix_weight = 0
+
+        df = df.with_columns(pl.col('data').struct.unnest()).drop('data')
         df = df.with_columns(
             pl.col('decision_weights').list.get(0).alias('_weight'),
             pl.col('decision_weights').list.get(1).alias('_risk_free_weight')
         )
         df = df.with_columns((pl.col("performance").list.get(0) / (pl.col('_weight') + 1e-6)).alias("_rtr"))
         df = df.join(self._heter, on=['year','month','portfolio'], how='left')
-        heter_df = df.filter(pl.col('sum') == 3)
-        not_heter_df = df.filter((pl.col('sum').is_null()) | (pl.col('sum') != 3))
-        pos_df = not_heter_df.filter(pl.col('reward') >= 0)
-        neg_df = not_heter_df.filter(pl.col('reward') < 0)
-        if not heter_df.is_empty():
-            kh = (self._short_limit - (1-self._short_limit)) / (0.03 - (-0.03))
-            heter_df = heter_df.with_columns(
-                (kh * (pl.col('_rtr') - (-0.03)) + (1-self._short_limit)).alias('_fix_weight')
-            )
-            heter_df = heter_df.with_columns(
-                (pl.col('_weight') * (1-mix_weight) + mix_weight * pl.col('_fix_weight')).alias('_weight')
-            )
-            heter_df = heter_df.with_columns(pl.col('reward') - random.uniform(0.01, 0.05))           
-            heter_df = heter_df.drop('_fix_weight')
+        heter_df = df.filter(pl.col('sum').is_not_null())
+        not_heter_df = df.filter(pl.col('sum').is_null())
 
-        if not neg_df.is_empty():
-            kn = (1-self._short_limit - self._short_limit) / (0.03 - (-0.01))
-            neg_df = neg_df.with_columns(
-                (kn * (pl.col('_rtr') - (-0.01)) + self._short_limit).alias('_fix_weight')
-            )
-            neg_df = neg_df.with_columns(
-                (pl.col('_weight') * (1-mix_weight) + mix_weight * pl.col('_fix_weight')).alias('_weight')
-            )
-            neg_df = neg_df.with_columns(pl.col('reward') + random.uniform(0.01, 0.05))
-            neg_df = neg_df.drop('_fix_weight')
+        not_heter_height = not_heter_df.height
+        mix_df = None
+        not_mix_df = None 
+        sample_num = int(not_heter_height * mix_weight)
+        
+        if mix_weight > 0 and mix_weight < 1:
+            mix_df = not_heter_df.sample(sample_num, seed = self._seed)
+            not_mix_df = not_heter_df.join(mix_df, on=['year','month','portfolio'], how='anti')
+        elif mix_weight == 1:
+            mix_df = not_heter_df
+            not_mix_df = pl.DataFrame()
+        else:
+            mix_df = pl.DataFrame()
+            not_mix_df = not_heter_df
 
-        df_list = [heter_df, pos_df, neg_df]
-        df_list = [df for df in df_list if not df.is_empty()]
-        if df_list:
+        if heter_df.height > 0:
+            rng = np.random.default_rng(self._seed)
+            return_array = heter_df['_rtr'].to_numpy()
+            mu_adder_by_return = heter_df.select(
+                (pl.col('_rtr').sign() * pl.col('_rtr').abs() * HETER_DETER).alias('_mu_adder_by_return')
+            )['_mu_adder_by_return'].to_numpy()
+            raw = np.full(heter_df.height, BASE_NORM_MU) + \
+                rng.normal(
+                    mu_adder_by_return, HETER_NORM_SIG
+                )
+            decisions = pl.Series('_weight', raw).clip(lower_bound = self._short_limit, upper_bound = 1 - self._short_limit)
+            heter_df = heter_df.with_columns(decisions)
+
+
+        if mix_df.height > 0:
+            rng = np.random.default_rng(self._seed)
+            return_array = mix_df['_rtr'].to_numpy()
+            mu_adder_by_return = mix_df.select(
+                pl.when(pl.col('_rtr') >= 0)
+                .then(MU_SCALE_POS * pl.col('_rtr').pow(MU_POWER))
+                .otherwise(MU_SCALE_NEG * -1 * pl.col('_rtr').abs().pow(MU_POWER))
+                .alias('_mu_adder_by_return')
+            )['_mu_adder_by_return'].to_numpy()
+            mu_base = np.full(mix_df.height, BASE_NORM_MU) + \
+                    rng.uniform(
+                        BASE_UNIFORM_LOWER, BASE_UNIFORM_UPPER, size=mix_df.height
+                    )
+            mu = mu_base + mu_adder_by_return
+
+            sigma = (E ** 2 + (A_RE ** 2 - B_RE * return_array ** 2).clip(min=0)) ** (0.5)
+            t_scale = np.sqrt(T_DF / (T_DF -2))
+            raw = mu + sigma / t_scale * rng.standard_t(T_DF, size=mix_df.height)
+            
+            decisions = pl.Series('_weight', raw).clip(lower_bound = self._short_limit, upper_bound = 1 - self._short_limit)
+            mix_df = mix_df.with_columns(decisions)
+
+        df_list = [df for df in [heter_df, mix_df, not_mix_df] if df.height > 0]
+        if len(df_list) > 0:
             df = pl.concat(df_list)
-
-        df = df.with_columns(pl.col('_weight').clip(self._short_limit, 1-self._short_limit).alias('_weight'))
+        else:
+            raise Exception("no data!")
+        
         df = df.with_columns((1 - pl.col('_weight')).alias('_risk_free_weight'))
-
-        df = df.with_columns(pl.concat_list(pl.col('_weight'), pl.col('_risk_free_weight')).alias('decision_weights'))
-        df = df.drop('_weight', '_risk_free_weight', '_rtr','sum')
-
-        df = df.with_columns(pl.struct(pl.col('decision_weights'), pl.col('performance'), pl.col('normalized_performance'), pl.col('reward')).alias('data'))
-        df = df.drop('decision_weights', 'performance', 'normalized_performance', 'reward')
+        df = df.with_columns(pl.concat_list(pl.col('_weight'),pl.col('_risk_free_weight')).alias('decision_weights'))
+        df = df.with_columns(pl.struct(pl.col('decision_weights'),pl.col('performance'),pl.col('normalized_performance'),pl.col('reward')).alias('data'))
+        df = df.drop(['_weight', '_rtr', 'sum', '_risk_free_weight'])
+        df = df.drop(['decision_weights','performance','normalized_performance','reward'])
         return df
+        
+                    
 
 
 SAVER = Saver()

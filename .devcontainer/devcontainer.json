@@ -1,6 +1,6 @@
 {
     "name": "Node Agent Development",
-    "image": "node_predict:gpu",
+    "image": "rl-node:gpu",
     
     "containerEnv": {
         "NODE_ID": "dev_node_001",
@@ -35,5 +35,6 @@
 
     "runArgs": [
         "--gpus", "all"
-    ]
+    ],
+    "gitConfig": {}
 }

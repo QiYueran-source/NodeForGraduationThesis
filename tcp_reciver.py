@@ -173,11 +173,16 @@ def handle_message(message_str: str, socket_client: socket):
         train_config = message.pop('train_config')
         task_id = message.get('task_id')  # 从 message 中获取 task_id
 
-        # 清理之前的数据
+        # 清理之前的数据：保留 /Node/data/outer，删除其余子项
         data_dir = Path('/Node/data')
-        if data_dir.exists():
-            shutil.rmtree(data_dir)
-            data_dir.mkdir(parents=True, exist_ok=True)
+        data_dir.mkdir(parents=True, exist_ok=True)
+        for child in list(data_dir.iterdir()):
+            if child.name == "outer":
+                continue
+            if child.is_dir() and not child.is_symlink():
+                shutil.rmtree(child)
+            else:
+                child.unlink(missing_ok=True)
 
         # 清理日志
         log_dir = Path('/Node/logs')
