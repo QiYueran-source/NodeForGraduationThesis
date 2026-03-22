@@ -5,6 +5,7 @@ logs/*.log
 # 数据
 data/* 
 !data/README.md
+!data/outer
 
 # 环境
 .env
