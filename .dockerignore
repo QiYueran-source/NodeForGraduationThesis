@@ -9,4 +9,7 @@ logs/*
 checkpoint_rl.zip 
 checkpoint.json 
 checkpoint.safetensors
+
+# 创建容器脚本
+create_containers.sh
  
