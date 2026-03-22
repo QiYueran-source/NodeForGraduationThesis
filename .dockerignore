@@ -1,10 +1,6 @@
 logs/*
 !logs/test.log  
 
-data/*
-!data/README.md
-!data/outer
-
 # git相关
 .git
 .gitignore
