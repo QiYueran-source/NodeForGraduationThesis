@@ -30,9 +30,6 @@ docs/
 logs/*
 !logs/test.log  
 
-# 数据
-data/*
-!data/README.md
 
 # 密码
 rsync.passwd
