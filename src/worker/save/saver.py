@@ -154,6 +154,7 @@ class Saver:
 
         # 转df
         df = pl.DataFrame(records)
+        logger.info(f"[p&r] 转换为df")
 
         if "data" in df.columns:
             df = df.with_columns(
@@ -183,6 +184,8 @@ class Saver:
             self._round_floats_in(rec, 4) for rec in df.to_dicts()
         ]
         lines = [json.dumps(obj, ensure_ascii=False) for obj in processed_records]
+        logger.info(f"[p&r] df 转换为lines，条数={len(lines)}")
+
         with self._snapshot_lock:
             if segment:
                 self._performance_and_reward_snapshot_cursor += 1
@@ -514,6 +517,7 @@ class Saver:
                 )
             decisions = pl.Series('_weight', raw).clip(lower_bound = self._short_limit, upper_bound = 1 - self._short_limit)
             heter_df = heter_df.with_columns(decisions)
+            logger.info(f"[p&r] heter_df 添加决策权重")
 
 
         if mix_df.height > 0:
@@ -537,11 +541,13 @@ class Saver:
             
             decisions = pl.Series('_weight', raw).clip(lower_bound = self._short_limit, upper_bound = 1 - self._short_limit)
             mix_df = mix_df.with_columns(decisions)
+            logger.info(f"[p&r] mix_df 添加决策权重")
 
         df_list = [df for df in [heter_df, mix_df, not_mix_df] if df.height > 0]
         if len(df_list) > 0:
             df = pl.concat(df_list)
         else:
+            logger.error(f"[p&r] 无数据，跳过")
             raise Exception("no data!")
         
         df = df.with_columns((1 - pl.col('_weight')).alias('_risk_free_weight'))
@@ -549,6 +555,7 @@ class Saver:
         df = df.with_columns(pl.struct(pl.col('decision_weights'),pl.col('performance'),pl.col('normalized_performance'),pl.col('reward')).alias('data'))
         df = df.drop(['_weight', '_rtr', 'sum', '_risk_free_weight'])
         df = df.drop(['decision_weights','performance','normalized_performance','reward'])
+        logger.info(f"[p&r] df 处理完成")
         return df
         
                     

@@ -38,3 +38,6 @@ rsync.passwd
 checkpoint.json
 checkpoint.safetensors
 checkpoint_rl.zip
+
+# 创建容器脚本
+create_containers.sh
