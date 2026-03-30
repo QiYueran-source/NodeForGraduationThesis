@@ -13,6 +13,7 @@ from src.worker.cache import DATA_CACHE_POOL
 from src.worker.agent.net.mlp import MLP, MLP_Critic
 from src.worker.agent.net.tcn import TCN, TCN_Critic
 from src.worker.agent.net.lstm import LSTM, LSTM_Critic
+from src.worker.agent.net.self_define_mlp import SelfDefineMLP, SelfDefineMLP_Critic
 
 # 日志
 from src.utils.logger import get_module_logger
@@ -78,6 +79,15 @@ class NetAdapter:
             )
         elif self.cate == 2:
             self._model = LSTM(
+                self.n,
+                self.m,
+                self.feature_dim,
+                self.dropout,
+                self.short_limit,
+                **self.config
+            )
+        elif self.cate == 4:
+            self._model = SelfDefineMLP(
                 self.n,
                 self.m,
                 self.feature_dim,
@@ -200,6 +210,15 @@ class CriticAdapter:
             )
         elif self.cate == 2:
             self._model = LSTM_Critic(
+                self.n,
+                self.m,
+                self.feature_dim,
+                self.dropout,
+                self.short_limit,
+                **self.config
+            )
+        elif self.cate == 4:
+            self._model = SelfDefineMLP_Critic(
                 self.n,
                 self.m,
                 self.feature_dim,
