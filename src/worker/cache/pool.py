@@ -70,6 +70,7 @@ class DataCachePool:
             'stock_list': [],
             'n': None,  # 固定，顶层。一个组合中的证券数量（算上现金共 n+1 个）
             'max_portfolios_num': None,  # 固定，顶层。可构建组合数上限
+            'skip_window': 0,  # 顶层。用于对齐 warmup 的额外跳过月份数
             'env_config': None,  # 固定，顶层。含 rf_end_year
             'mix_weight': None, # 兜底权重
             'performance_config': None,  # 固定，顶层。含 risk_free_rate；vol/sharpe/mdd 窗口用 train_config.m
@@ -391,6 +392,23 @@ class DataCachePool:
         """设置做空限制"""
         with self._meta_lock:
             self._meta['short_limit'] = limit
+
+    def get_skip_window(self) -> int:
+        """获取对齐 warmup 的额外跳过月份数（skip_window >= 0）"""
+        with self._meta_lock:
+            v = self._meta.get('skip_window', 0)
+            try:
+                return int(v)
+            except Exception:
+                return 0
+
+    def put_skip_window(self, value: int):
+        """设置对齐 warmup 的额外跳过月份数"""
+        with self._meta_lock:
+            try:
+                self._meta['skip_window'] = int(value)
+            except Exception:
+                self._meta['skip_window'] = 0
 
     def get_checkpoint(self) -> bool:
         """是否使用断点（从 meta.checkpoint 读取，True 时在 train 前尝试加载 /Node/checkpoint.safetensors）"""

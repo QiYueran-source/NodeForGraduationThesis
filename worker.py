@@ -61,6 +61,7 @@ def parse_args_and_load_pool():
     DATA_CACHE_POOL.put_performance_config(meta['performance_config'])
     DATA_CACHE_POOL.put_env_config(meta['env_config'])
     DATA_CACHE_POOL.put_short_limit(meta['short_limit'])
+    DATA_CACHE_POOL.put_skip_window(meta.get('skip_window', 0))
     checkpoint_enabled = meta.get('checkpoint', False)
     DATA_CACHE_POOL.put_checkpoint(checkpoint_enabled)
     DATA_CACHE_POOL.put_port(meta.get('port'))

@@ -148,9 +148,12 @@ class AgentDataAdapter:
         初始化/对齐当前窗口并写入 record。default=(start_year,1) 向后移动 m-1 月，使首窗的 m 期回看从 (start_year,1) 起，避免缺数据；
         与 earliest_available（满足 m 期 lookback）取较晚者。支持 m>12。
         """
-        m = self.train_config.get('m', 1)
-        default_start_year_month = self._roll_year_month((self.start_year, 1), m - 1)
-        earliest_available_year_month = self._roll_year_month(self.earliest_year_month, m - 1)
+        m = int(self.train_config.get('m', 1))
+        skip_window = DATA_CACHE_POOL.get_skip_window()
+        offset = max(m - 1, skip_window)
+
+        default_start_year_month = self._roll_year_month((self.start_year, 1), offset)
+        earliest_available_year_month = self._roll_year_month(self.earliest_year_month, offset)
         if AgentDataAdapter._year_month_greater(earliest_available_year_month, default_start_year_month):
             current_year_month = earliest_available_year_month
         else:
