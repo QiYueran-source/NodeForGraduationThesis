@@ -71,3 +71,62 @@ class TCN(nn.Module):
         if batch_shape:
             x = x.reshape(*batch_shape, self.output_dim)
         return x
+
+
+class TCN_Critic(nn.Module):
+    """
+    critic/value 网络：结构与 actor 的 TCN backbone 基本一致，
+    但输出层改为单神经元、且不做激活/归一化，输出全实数。
+    """
+
+    def __init__(
+        self,
+        n: int,
+        m: int,
+        mask_len: int,
+        dropout: Optional[float] = None,
+        short_limit: float = 0.0,  # 保持签名一致，critic 不使用
+        **config: dict,
+    ):
+        super().__init__()
+        self.n = n
+        self.m = m
+        self.mask_len = mask_len
+
+        in_channels = n * m
+        num_channels: List[int] = config.get("num_channels", [64, 64])
+        kernel_size: int = config.get("kernel_size", 3)
+
+        layers: List[nn.Module] = []
+        pad = kernel_size // 2  # 保持时间维长度不变
+        for i, out_ch in enumerate(num_channels):
+            layers.append(
+                nn.Conv1d(
+                    in_channels if i == 0 else num_channels[i - 1],
+                    out_ch,
+                    kernel_size,
+                    padding=pad,
+                )
+            )
+            layers.append(nn.ReLU())
+            if dropout and dropout > 0:
+                layers.append(nn.Dropout(dropout))
+        self.conv_stack = nn.Sequential(*layers)
+
+        self.pool = nn.AdaptiveAvgPool1d(1)
+        hidden = num_channels[-1]
+        self.fc = nn.Linear(hidden, 1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: (..., n, m, mask_len) -> (batch, n*m, mask_len)
+        batch_shape = x.shape[:-3]
+        x = x.reshape(-1, self.n * self.m, self.mask_len)
+
+        x = self.conv_stack(x)
+        x = self.pool(x)  # (batch, hidden, 1)
+        x = x.squeeze(-1)  # (batch, hidden)
+        x = self.fc(x)  # (batch, 1)
+
+        if batch_shape:
+            x = x.reshape(*batch_shape, 1)
+        return x

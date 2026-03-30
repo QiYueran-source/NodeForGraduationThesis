@@ -10,9 +10,9 @@ from safetensors.torch import load_file
 
 # 组件
 from src.worker.cache import DATA_CACHE_POOL 
-from src.worker.agent.net.mlp import MLP
-from src.worker.agent.net.tcn import TCN
-from src.worker.agent.net.lstm import LSTM
+from src.worker.agent.net.mlp import MLP, MLP_Critic
+from src.worker.agent.net.tcn import TCN, TCN_Critic
+from src.worker.agent.net.lstm import LSTM, LSTM_Critic
 
 # 日志
 from src.utils.logger import get_module_logger
@@ -141,3 +141,86 @@ class NetAdapter:
     
 
 NET_ADAPTER = NetAdapter()
+
+
+class CriticAdapter:
+    """
+    critic/value 网络适配器：与 NetAdapter 使用同一个 cate/bakcbone，
+    仅将网络输出头替换为 1 个不激活的实数（value）。
+    """
+
+    def __init__(self):
+        self._model: torch.nn.Module = None
+
+        tc = DATA_CACHE_POOL.get_train_config() or {}
+        self.seed = tc.get('seed', 42)
+        self.m = tc.get('m', 1)
+        self.n = DATA_CACHE_POOL.get_n() or 1
+        self.short_limit = DATA_CACHE_POOL.get_short_limit() or 0.0
+        self.mask_len = tc.get('mask_len', 60)
+        self.feature_dim = self.mask_len + 1
+        self.model_config = tc.get('model_config', {})
+
+        self.cate = self.model_config.get('cate', 0)
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.dropout = self.model_config.get('dropout', 0)
+        self.config = self.model_config.get('config', {})
+
+        torch.manual_seed(self.seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(self.seed)
+
+        self._set_model()
+        self._to_device()
+
+    def _set_model(self):
+        """
+        cate: 模型类别（与 actor 相同）：
+        - 0: MLP
+        - 1: TCN
+        - 2: LSTM
+        """
+        if self.cate == 0:
+            self._model = MLP_Critic(
+                self.n,
+                self.m,
+                self.feature_dim,
+                self.dropout,
+                self.short_limit,
+                **self.config
+            )
+        elif self.cate == 1:
+            self._model = TCN_Critic(
+                self.n,
+                self.m,
+                self.feature_dim,
+                self.dropout,
+                self.short_limit,
+                **self.config
+            )
+        elif self.cate == 2:
+            self._model = LSTM_Critic(
+                self.n,
+                self.m,
+                self.feature_dim,
+                self.dropout,
+                self.short_limit,
+                **self.config
+            )
+        else:
+            raise ValueError(f"不支持的 model_config.cate: {self.cate}")
+
+    def _to_device(self):
+        self._model.to(self.device)
+        if self.device.type == 'cuda':
+            logger.info("使用cuda")
+
+    def __call__(self, obs: torch.Tensor) -> torch.Tensor:
+        return self._model(obs)
+
+    @property
+    def model(self) -> torch.nn.Module:
+        return self._model
+
+
+CRITIC_ADAPTER = CriticAdapter()

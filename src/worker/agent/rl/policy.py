@@ -68,12 +68,15 @@ class CustomActorCriticPolicy(ActorCriticPolicy):
         **kwargs: Any,
     ):
         actor_net = kwargs.pop("actor_net", None)
+        critic_net = kwargs.pop("critic_net", None)
         if actor_net is not None:
             kwargs.setdefault("features_extractor_class", MLPFeatureExtractor)
             fe_kwargs = kwargs.setdefault("features_extractor_kwargs", {})
             fe_kwargs["actor_net"] = actor_net
+        self.critic_net = critic_net
         if "net_arch" not in kwargs:
-            kwargs["net_arch"] = dict(pi=[], vf=[64, 64])
+            # 当提供 critic_net 时：value 网络将由 critic_net 直接给出，不再需要 SB3 的 vf MLP
+            kwargs["net_arch"] = dict(pi=[], vf=[] if critic_net is not None else [64, 64])
         super().__init__(observation_space, action_space, lr_schedule, *args, **kwargs)
 
     def _build(self, lr_schedule: Schedule) -> None:
@@ -89,6 +92,36 @@ class CustomActorCriticPolicy(ActorCriticPolicy):
         self.optimizer = self.optimizer_class(
             self.parameters(), lr=lr_schedule(1), **self.optimizer_kwargs
         )
+
+        if self.critic_net is not None:
+            self.critic_net.to(self.device)
+
+    def forward(self, obs: torch.Tensor, deterministic: bool = False) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if self.critic_net is None:
+            return super().forward(obs, deterministic=deterministic)
+
+        distribution = self.get_distribution(obs)
+        actions = distribution.get_actions(deterministic=deterministic)
+        log_prob = distribution.log_prob(actions)
+        values = self.critic_net(obs)
+
+        actions = actions.reshape((-1, *self.action_space.shape))  # type: ignore[misc]
+        return actions, values, log_prob
+
+    def evaluate_actions(self, obs: torch.Tensor, actions: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if self.critic_net is None:
+            return super().evaluate_actions(obs, actions)
+
+        distribution = self.get_distribution(obs)
+        log_prob = distribution.log_prob(actions)
+        entropy = distribution.entropy()
+        values = self.critic_net(obs)
+        return values, log_prob, entropy
+
+    def predict_values(self, obs: torch.Tensor) -> torch.Tensor:
+        if self.critic_net is None:
+            return super().predict_values(obs)
+        return self.critic_net(obs)
 
     def _get_action_dist_from_latent(self, latent_pi: torch.Tensor) -> Any:
         mean_actions = self.action_net(latent_pi)

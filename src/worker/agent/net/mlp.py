@@ -51,4 +51,37 @@ class MLP(nn.Module):
         """
         反向传播
         """
+
+
+class MLP_Critic(nn.Module):
+    """
+    critic/value 网络：结构与 actor 的 MLP backbone 基本一致，
+    但输出层改为单神经元、且不做激活/归一化，输出全实数。
+    """
+
+    def __init__(
+        self,
+        n: int,
+        m: int,
+        mask_len: int,
+        dropout: Optional[float] = None,
+        short_limit: float = 0.0,  # 保持签名一致，critic 不使用
+        **config: dict,
+    ):
+        super().__init__()
+        self.n = n
+        self.m = m
+        self.mask_len = mask_len
+        input_dim = n * m * mask_len
+
+        self.linear = nn.Linear(input_dim, 1)
+        self.dropout = nn.Dropout(dropout) if dropout is not None and dropout > 0 else None
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # 输入: (..., n, m, mask_len) -> (..., n*m*mask_len)
+        x = x.reshape(*x.shape[:-3], -1)
+        if self.dropout is not None:
+            x = self.dropout(x)
+        # 输出: (..., 1)
+        return self.linear(x)
         

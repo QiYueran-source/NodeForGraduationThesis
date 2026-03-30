@@ -16,7 +16,7 @@ from stable_baselines3.common.utils import set_random_seed
 # 组件
 from src.worker.cache.pool import DATA_CACHE_POOL
 from src.worker.agent.env.rolling_env import ROLLING_ENV
-from src.worker.agent.net import NET_ADAPTER
+from src.worker.agent.net import NET_ADAPTER, CRITIC_ADAPTER
 from src.worker.agent.rl.policy import CustomActorCriticPolicy, MLPFeatureExtractor
 
 # 日志
@@ -145,7 +145,7 @@ class ReinforcementLearningAdapter:
         self.rl_algorithm = PPO(
             policy=CustomActorCriticPolicy,
             env=ROLLING_ENV,
-            policy_kwargs=dict(actor_net=NET_ADAPTER.model),
+            policy_kwargs=dict(actor_net=NET_ADAPTER.model, critic_net=CRITIC_ADAPTER.model),
             learning_rate=self.opt.get('lr', 3e-4),
             n_steps=self.rl_config.get('n_steps', 2048),
             batch_size=self.rl_config.get('batch_size', 64),

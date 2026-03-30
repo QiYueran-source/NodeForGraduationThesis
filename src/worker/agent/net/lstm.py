@@ -65,3 +65,56 @@ class LSTM(nn.Module):
         if batch_shape:
             x = x.reshape(*batch_shape, self.output_dim)
         return x
+
+
+class LSTM_Critic(nn.Module):
+    """
+    critic/value 网络：结构与 actor 的 LSTM backbone 基本一致，
+    但输出层改为单神经元、且不做激活/归一化，输出全实数。
+    """
+
+    def __init__(
+        self,
+        n: int,
+        m: int,
+        mask_len: int,
+        dropout: Optional[float] = None,
+        short_limit: float = 0.0,  # 保持签名一致，critic 不使用
+        **config: dict,
+    ):
+        super().__init__()
+        self.n = n
+        self.m = m
+        self.mask_len = mask_len
+        input_size = n * m
+
+        hidden_size: int = config.get("hidden_size", 64)
+        num_layers: int = config.get("num_layers", 1)
+        bidirectional: bool = config.get("bidirectional", False)
+
+        self.lstm = nn.LSTM(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=float(dropout) if dropout and dropout > 0 and num_layers > 1 else 0.0,
+            bidirectional=bidirectional,
+        )
+        out_size = hidden_size * (2 if bidirectional else 1)
+        self.fc = nn.Linear(out_size, 1)
+        self._dropout = nn.Dropout(dropout) if dropout and dropout > 0 else None
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # 输入: (..., n, m, mask_len) -> (batch, seq_len=mask_len, input_size=n*m)
+        batch_shape = x.shape[:-3]
+        x = x.reshape(-1, self.mask_len, self.n * self.m)
+
+        out, _ = self.lstm(x)  # (batch, mask_len, hidden*dir)
+        x = out[:, -1, :]  # (batch, hidden*dir)
+        if self._dropout is not None:
+            x = self._dropout(x)
+
+        x = self.fc(x)  # (batch, 1)
+        if batch_shape:
+            x = x.reshape(*batch_shape, 1)
+        return x
