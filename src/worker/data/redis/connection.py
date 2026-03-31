@@ -55,6 +55,12 @@ class RedisConnector:
                 else:
                     raise 
 
+                # 若提供 REDIS_HOST 环境变量，则覆盖配置文件中的 host。
+                # 默认情况下，redis.yaml 中的 host 使用 frp 公网 IP。
+                env_host = os.getenv('REDIS_HOST')
+                if env_host:
+                    self._config['parameters']['host'] = env_host
+
         except Exception as e:
             logger.error(f"Redis配置读取失败: {e}")
             raise RedisConfigurationException(f"Redis配置读取失败: {e}")
